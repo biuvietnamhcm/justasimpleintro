@@ -265,15 +265,19 @@ public class VideoScreen extends Screen {
 
     // ── Video rendering ───────────────────────────────────────────────────────
     private void renderVideo(GuiGraphics gfx) {
-        int   vw    = videoWidth, vh = videoHeight;
-        float scale = Math.max((float)width / vw, (float)height / vh);
-        int   dw    = (int)(vw * scale);
-        int   dh    = (int)(vh * scale);
-        int   dx    = (width  - dw) / 2;
-        int   dy    = (height - dh) / 2;
+        int vw = videoWidth;
+        int vh = videoHeight;
+
+        float scale = Math.max((float) width / vw, (float) height / vh);
+
+        int dw = (int) (vw * scale);
+        int dh = (int) (vh * scale);
+
+        int dx = (width - dw) / 2;
+        int dy = (height - dh) / 2;
+
         gfx.blit(textureLocation, dx, dy, dw, dh, 0, 0, vw, vh, vw, vh);
     }
-
     // ── Menu UI ───────────────────────────────────────────────────────────────
     private void renderMenuUI(GuiGraphics gfx, int mouseX, int mouseY, long now, float fade) {
         // Hover detection
