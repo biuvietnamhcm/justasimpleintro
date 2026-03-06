@@ -375,9 +375,9 @@ public class CustomTitleScreen extends Screen {
     private void navigate(String id) {
         Minecraft mc = Minecraft.getInstance();
         switch (id) {
-            case "sp"   -> mc.setScreen(new SelectWorldScreen(this));
-            case "mp"   -> mc.setScreen(new JoinMultiplayerScreen(this));
-            case "opt"  -> mc.setScreen(new OptionsScreen(this, mc.options));
+            case "sp"   -> ScreenUtil.setScreen(new SelectWorldScreen(this));   // was: null
+            case "mp"   -> ScreenUtil.setScreen(new JoinMultiplayerScreen(this)); // was: null
+            case "opt"  -> ScreenUtil.setScreen(new OptionsScreen(this, mc.options)); // was: null
             case "quit" -> mc.stop();
         }
     }

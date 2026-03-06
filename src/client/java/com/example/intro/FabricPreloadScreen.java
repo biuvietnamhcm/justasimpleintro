@@ -113,7 +113,7 @@ public class FabricPreloadScreen extends Screen {
         // ── Advance when done ─────────────────────────────────────────────
         if (rawProg >= 1f && !advanced) {
             advanced = true;
-            Minecraft.getInstance().setScreen(new VideoScreen());
+            ScreenUtil.setScreen(new VideoScreen());
         }
     }
 

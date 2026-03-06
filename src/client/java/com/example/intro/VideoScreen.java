@@ -16,6 +16,7 @@ import java.io.File;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
+import net.minecraft.resources.ResourceLocation;
 
 /**
  * Phase 2 — Intro Video Screen
@@ -33,7 +34,7 @@ public class VideoScreen extends Screen {
     private static final int    BUFFER_FRAMES  = 24;
     private static final long   SKIP_DELAY_MS  = 1_500;
     private static final long   FADE_IN_MS     = 500;
-
+    private ResourceLocation textureLocation;
     /** Sentinel pushed by decode thread to signal EOF. */
     private static final int[] EOF_SENTINEL = new int[0];
 
@@ -74,6 +75,48 @@ public class VideoScreen extends Screen {
         super.removed();
     }
 
+    private void uploadFrame() {
+    int w = videoWidth;
+    int h = videoHeight;
+
+    if (videoTexture == null || texW != w || texH != h) {
+        if (videoTexture != null) {
+            videoTexture.close();
+        }
+
+        videoTexture = new DynamicTexture(
+                new NativeImage(NativeImage.Format.RGBA, w, h, false)
+        );
+
+        texW = w;
+        texH = h;
+
+        textureLocation = Minecraft.getInstance()
+                .getTextureManager()
+                .register("intro_video", videoTexture);
+    }
+
+    NativeImage img = videoTexture.getPixels();
+    if (img == null) return;
+
+    int[] px = currentPixels;
+
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            int argb = px[y * w + x];
+
+            int a = (argb >> 24) & 0xFF;
+            int r = (argb >> 16) & 0xFF;
+            int g = (argb >> 8) & 0xFF;
+            int b = argb & 0xFF;
+
+            // Minecraft uses ABGR
+            img.setPixelRGBA(x, y, (a << 24) | (b << 16) | (g << 8) | r);
+        }
+    }
+
+    videoTexture.upload();
+}
     @Override
     public boolean shouldCloseOnEsc() { return false; }
 
@@ -87,6 +130,13 @@ public class VideoScreen extends Screen {
 
         decodeThread = new Thread(() -> {
             try {
+                if (!videoFile.exists()) {
+                    System.err.println("[Intro] Video file not found at: " + videoFile.getAbsolutePath());
+                    decodeError.set(true);
+                    try { frameQueue.put(EOF_SENTINEL); } catch (InterruptedException ignored) {}
+                    return;
+                }
+
                 FrameGrab grab = FrameGrab.createFrameGrab(NIOUtils.readableChannel(videoFile));
 
                 // Detect FPS from container metadata
@@ -125,7 +175,6 @@ public class VideoScreen extends Screen {
         long now     = System.currentTimeMillis();
         long elapsed = startMs < 0 ? 0 : now - startMs;
 
-        // Advance frame?
         if (!playbackEnded && now - lastFrameMs >= frameDelayMs) {
             int[] next = frameQueue.poll();
             if (next == EOF_SENTINEL) {
@@ -145,53 +194,34 @@ public class VideoScreen extends Screen {
             drawSpinner(gfx, now);
         }
 
-        // Fade in
         if (elapsed < FADE_IN_MS) {
             gfx.fill(0, 0, width, height, (int)((1.0 - elapsed / (double)FADE_IN_MS) * 255) << 24);
         }
 
-        // Skip hint
         if (elapsed > SKIP_DELAY_MS) drawSkipHint(gfx, now);
 
         if ((playbackEnded || decodeError.get()) && !advanced) advance();
+
+        // IMPORTANT
+        super.render(gfx, mouseX, mouseY, delta);
     }
 
     // ── Texture ───────────────────────────────────────────────────────────────
-    private void uploadFrame() {
-        int w = videoWidth, h = videoHeight;
-        if (videoTexture == null || texW != w || texH != h) {
-            if (videoTexture != null) videoTexture.close();
-            videoTexture = new DynamicTexture(
-                    new NativeImage(NativeImage.Format.RGBA, w, h, false));
-            texW = w; texH = h;
-        }
-        NativeImage img = videoTexture.getPixels();
-        if (img == null) return;
-        int[] px = currentPixels;
-        for (int y = 0; y < h; y++) {
-            for (int x = 0; x < w; x++) {
-                int argb = px[y * w + x];
-                int a = (argb >> 24) & 0xFF;
-                int r = (argb >> 16) & 0xFF;
-                int g = (argb >>  8) & 0xFF;
-                int b =  argb        & 0xFF;
-                // NativeImage is ABGR on little-endian
-                img.setPixelRGBA(x, y, (a << 24) | (b << 16) | (g << 8) | r);
-            }
-        }
-        videoTexture.upload();
-    }
+
 
     /** Cover-scale the video onto the screen. */
     private void renderVideo(GuiGraphics gfx) {
         int vw = videoWidth, vh = videoHeight;
-        float scale = Math.max((float)width / vw, (float)height / vh);
-        int dw = (int)(vw * scale), dh = (int)(vh * scale);
-        int dx = (width - dw) / 2, dy = (height - dh) / 2;
 
-        var loc = Minecraft.getInstance().getTextureManager()
-                           .register("intro_video", videoTexture);
-        gfx.blit(loc, dx, dy, dw, dh, 0, 0, vw, vh, vw, vh);
+        float scale = Math.max((float)width / vw, (float)height / vh);
+
+        int dw = (int)(vw * scale);
+        int dh = (int)(vh * scale);
+
+        int dx = (width - dw) / 2;
+        int dy = (height - dh) / 2;
+
+        gfx.blit(textureLocation, dx, dy, dw, dh, 0, 0, vw, vh, vw, vh);
     }
 
     private void drawSpinner(GuiGraphics gfx, long now) {
@@ -231,12 +261,19 @@ public class VideoScreen extends Screen {
         }
         return super.mouseClicked(mx, my, btn);
     }
-
-    private void advance() {
+    private synchronized void advance() {
         if (advanced) return;
         advanced = true;
+
         if (decodeThread != null) decodeThread.interrupt();
-        Minecraft.getInstance().execute(
-                () -> Minecraft.getInstance().setScreen(new CustomTitleScreen()));
+
+        Minecraft mc = Minecraft.getInstance();
+
+        // Delay to next tick so render cycle finishes
+        mc.tell(() -> {
+            if (mc.screen == this) {
+                ScreenUtil.setScreen(new CustomTitleScreen());
+            }
+        });
     }
 }

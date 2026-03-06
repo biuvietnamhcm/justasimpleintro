@@ -10,28 +10,25 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * Intercepts every {@link TitleScreen} initialisation:
- * <ul>
- *   <li>First launch → FabricPreloadScreen → VideoScreen → CustomTitleScreen</li>
- *   <li>All subsequent (return from Options, etc.) → CustomTitleScreen directly</li>
- * </ul>
+ * Intercepts TitleScreen after it initializes.
+ * First launch → Preload → Video → Custom menu
+ * Later launches → Custom menu directly
  */
 @Mixin(TitleScreen.class)
 public class TitleScreenMixin {
 
-    /** Whether the one-time intro (preload + video) has already played. */
     private static boolean introPlayed = false;
 
-    @Inject(method = "init", at = @At("HEAD"), cancellable = true)
+    @Inject(method = "init", at = @At("TAIL"))
     private void onInit(CallbackInfo ci) {
+
+        Minecraft client = Minecraft.getInstance();
+
         if (!introPlayed) {
             introPlayed = true;
-            // Full intro flow: preload animation → video → custom menu
-            Minecraft.getInstance().setScreen(new FabricPreloadScreen());
+            client.setScreen(new FabricPreloadScreen());
         } else {
-            // Skip intro; show custom menu immediately
-            Minecraft.getInstance().setScreen(new CustomTitleScreen());
+            client.setScreen(new CustomTitleScreen());
         }
-        ci.cancel();
     }
 }
