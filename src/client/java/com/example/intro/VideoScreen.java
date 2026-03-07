@@ -194,7 +194,12 @@ public class VideoScreen extends Screen {
         s_decodeThread.start();
     }
 
+    private static File s_cachedVideoFile = null;
+    private static boolean s_videoFileCached = false;
+
     private static File resolveVideoFile() {
+        if (s_videoFileCached) return s_cachedVideoFile;
+        
         Minecraft mc = Minecraft.getInstance();
         File gameDir = mc.gameDirectory;
         File[] candidates = {
@@ -205,10 +210,13 @@ public class VideoScreen extends Screen {
         };
         for (File f : candidates) {
             if (f != null && f.exists()) {
+                s_cachedVideoFile = f;
+                s_videoFileCached = true;
                 System.out.println("[Intro] Found video at: " + f.getAbsolutePath());
                 return f;
             }
         }
+        s_videoFileCached = true;
         return null;
     }
 
@@ -475,10 +483,6 @@ public class VideoScreen extends Screen {
                 }
             }
         }
-        if (!s_loopMode && now - s_startMs > SKIP_DELAY_MS) {
-            enterLoopMode();
-            return true;
-        }
         return false;
     }
 
@@ -507,6 +511,10 @@ public class VideoScreen extends Screen {
      *
      * If for any reason TitleScreen is shown instead, TitleScreenMixin
      * intercepts init() and redirects to a new VideoScreen automatically.
+     *
+     * IMPORTANT: Screen changes are scheduled for the next tick using mc.tell()
+     * to avoid NullPointerException from Fabric's ScreenEvents.afterRender()
+     * being called during the render frame when setScreen() is active.
      */
     private void navigate(String id) {
         Minecraft mc = Minecraft.getInstance();
@@ -514,10 +522,10 @@ public class VideoScreen extends Screen {
         net.minecraft.client.gui.screens.TitleScreen parent = new net.minecraft.client.gui.screens.TitleScreen();
 
         switch (id) {
-            case "sp"   -> mc.setScreen(new SelectWorldScreen(parent));
-            case "mp"   -> mc.setScreen(new JoinMultiplayerScreen(parent));
-            case "opt"  -> mc.setScreen(new OptionsScreen(parent, mc.options));
-            case "quit" -> mc.stop();
+            case "sp"   -> mc.tell(() -> mc.setScreen(new SelectWorldScreen(parent)));
+            case "mp"   -> mc.tell(() -> mc.setScreen(new JoinMultiplayerScreen(parent)));
+            case "opt"  -> mc.tell(() -> mc.setScreen(new OptionsScreen(parent, mc.options)));
+            case "quit" -> mc.tell(mc::stop);
         }
     }
 

@@ -22,12 +22,18 @@ import net.minecraft.client.gui.screens.TitleScreen;
  *
  * FabricPreloadScreen / CustomTitleScreen are no longer needed here;
  * VideoScreen handles both the intro phase and the menu phase itself.
+ *
+ * IMPORTANT: Schedule the screen change on the next tick to avoid
+ * NullPointerException from Fabric's ScreenEvents.afterRender() being
+ * called while the screen is null during this render frame.
  */
 @Mixin(TitleScreen.class)
 public class TitleScreenMixin {
 
     @Inject(method = "init", at = @At("TAIL"))
     private void onInit(CallbackInfo ci) {
-        Minecraft.getInstance().setScreen(new VideoScreen());
+        // Schedule screen change for next tick to avoid NPE in ScreenEvents
+        Minecraft mc = Minecraft.getInstance();
+        mc.tell(() -> mc.setScreen(new VideoScreen()));
     }
 }
