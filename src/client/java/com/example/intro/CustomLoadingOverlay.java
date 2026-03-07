@@ -12,10 +12,9 @@ import java.util.function.Consumer;
 
 public class CustomLoadingOverlay extends Overlay {
 
-    // ── Real loading state ────────────────────────────────────────────────────
-    private final Minecraft                        mc;
-    private final ReloadInstance                   reload;
-    private final Consumer<Optional<Throwable>>    onFinish;
+    private final Minecraft                     mc;
+    private final ReloadInstance                reload;
+    private final Consumer<Optional<Throwable>> onFinish;
 
     private float   displayProgress = 0f;
     private float   fadeAlpha       = 1f;
@@ -28,25 +27,16 @@ public class CustomLoadingOverlay extends Overlay {
     private static final int BLOCK_PX     = 12;
 
     private static final int[] BLOCK_PALETTE = {
-        0xFF4A3020, // 0 dirt
-        0xFF555555, // 1 stone
-        0xFF3A7A1A, // 2 grass top
-        0xFF4A8820, // 3 grass bright
-        0xFF1A1A2E, // 4 bedrock / deep
-        0xFF6A4A22, // 5 sand
-        0xFF334422, // 6 mossy stone
+        0xFF4A3020, 0xFF555555, 0xFF3A7A1A, 0xFF4A8820,
+        0xFF1A1A2E, 0xFF6A4A22, 0xFF334422,
     };
 
     private final int[]   terrain   = new int[WORLD_COLS];
     private final int[][] blockType = new int[WORLD_COLS][WORLD_HEIGHT];
 
-    // ── Torches ───────────────────────────────────────────────────────────────
-    private static final int TORCH_COUNT = 7;
-    private final float[][] torches = new float[TORCH_COUNT][4];
-
-    // ── Particles ─────────────────────────────────────────────────────────────
-    private static final int PARTICLE_COUNT = 130;
-    private final float[][] particles = new float[PARTICLE_COUNT][6];
+    // ── Particles only (torches removed) ─────────────────────────────────────
+    private static final int    PARTICLE_COUNT = 130;
+    private final        float[][] particles   = new float[PARTICLE_COUNT][6];
 
     // ── Colours ───────────────────────────────────────────────────────────────
     private static final int COL_SKY_TOP   = 0xFF050810;
@@ -55,8 +45,51 @@ public class CustomLoadingOverlay extends Overlay {
     private static final int COL_BAR_BG    = 0xFF1A1A2E;
     private static final int COL_BAR_FILL  = 0xFF9B72CF;
     private static final int COL_BAR_SHINE = 0xFFDDB9FF;
-    private static final int COL_TEXT      = 0xFFEEEEEE;
-    private static final int COL_TEXT_DIM  = 0xFF888899;
+
+    // =========================================================================
+    // Pixel font — int[][] per glyph (7 rows × int[1] of 5-bit mask)
+    // =========================================================================
+    private static final int PIXEL_SCALE = 2;
+
+    private static final int[][] G_F    = {{0b11111},{0b10000},{0b11110},{0b10000},{0b10000},{0b10000},{0b10000}};
+    private static final int[][] G_A    = {{0b01110},{0b10001},{0b10001},{0b11111},{0b10001},{0b10001},{0b10001}};
+    private static final int[][] G_B    = {{0b11110},{0b10001},{0b10001},{0b11110},{0b10001},{0b10001},{0b11110}};
+    private static final int[][] G_R    = {{0b11110},{0b10001},{0b10001},{0b11110},{0b10100},{0b10010},{0b10001}};
+    private static final int[][] G_I    = {{0b11111},{0b00100},{0b00100},{0b00100},{0b00100},{0b00100},{0b11111}};
+    private static final int[][] G_C    = {{0b01110},{0b10001},{0b10000},{0b10000},{0b10000},{0b10001},{0b01110}};
+    private static final int[][] G_L    = {{0b10000},{0b10000},{0b10000},{0b10000},{0b10000},{0b10000},{0b11111}};
+    private static final int[][] G_O    = {{0b01110},{0b10001},{0b10001},{0b10001},{0b10001},{0b10001},{0b01110}};
+    private static final int[][] G_D    = {{0b11100},{0b10010},{0b10001},{0b10001},{0b10001},{0b10010},{0b11100}};
+    private static final int[][] G_N    = {{0b10001},{0b11001},{0b10101},{0b10011},{0b10001},{0b10001},{0b10001}};
+    private static final int[][] G_G    = {{0b01110},{0b10001},{0b10000},{0b10111},{0b10001},{0b10001},{0b01111}};
+    private static final int[][] G_DOT  = {{0b00000},{0b00000},{0b00000},{0b00000},{0b00000},{0b01100},{0b01100}};
+    private static final int[][] G_SPC  = {{0b00000},{0b00000},{0b00000},{0b00000},{0b00000},{0b00000},{0b00000}};
+    private static final int[][] G_PCT  = {{0b11000},{0b11001},{0b00010},{0b00100},{0b01000},{0b10011},{0b00011}};
+    private static final int[][] G_PIPE = {{0b00100},{0b00100},{0b00100},{0b00100},{0b00100},{0b00100},{0b00100}};
+    private static final int[][] G_COPY = {{0b01110},{0b10001},{0b10110},{0b10100},{0b10110},{0b10001},{0b01110}};
+
+    private static final int[][][] G_DIGITS = {
+        {{0b01110},{0b10001},{0b10011},{0b10101},{0b11001},{0b10001},{0b01110}}, // 0
+        {{0b00100},{0b01100},{0b00100},{0b00100},{0b00100},{0b00100},{0b01110}}, // 1
+        {{0b01110},{0b10001},{0b00001},{0b00110},{0b01000},{0b10000},{0b11111}}, // 2
+        {{0b11111},{0b00001},{0b00010},{0b00110},{0b00001},{0b10001},{0b01110}}, // 3
+        {{0b00010},{0b00110},{0b01010},{0b10010},{0b11111},{0b00010},{0b00010}}, // 4
+        {{0b11111},{0b10000},{0b11110},{0b00001},{0b00001},{0b10001},{0b01110}}, // 5
+        {{0b01110},{0b10000},{0b10000},{0b11110},{0b10001},{0b10001},{0b01110}}, // 6
+        {{0b11111},{0b00001},{0b00010},{0b00100},{0b01000},{0b01000},{0b01000}}, // 7
+        {{0b01110},{0b10001},{0b10001},{0b01110},{0b10001},{0b10001},{0b01110}}, // 8
+        {{0b01110},{0b10001},{0b10001},{0b01111},{0b00001},{0b00001},{0b01110}}, // 9
+    };
+
+    private static final int[][] G_BSMALL = {{0b10000},{0b10000},{0b11100},{0b10010},{0b10010},{0b10010},{0b11100}};
+    private static final int[][] G_ISMALL = {{0b00100},{0b00000},{0b00100},{0b00100},{0b00100},{0b00100},{0b00110}};
+    private static final int[][] G_USMALL = {{0b00000},{0b00000},{0b10010},{0b10010},{0b10010},{0b10010},{0b01110}};
+    private static final int[][] G_VSMALL = {{0b00000},{0b00000},{0b10001},{0b10001},{0b10001},{0b01010},{0b00100}};
+    private static final int[][] G_ESMALL = {{0b00000},{0b00000},{0b01110},{0b10001},{0b11111},{0b10000},{0b01110}};
+    private static final int[][] G_TSMALL = {{0b00000},{0b01110},{0b00100},{0b00100},{0b00100},{0b00100},{0b00010}};
+    private static final int[][] G_NSMALL = {{0b00000},{0b00000},{0b11010},{0b10110},{0b10010},{0b10010},{0b10010}};
+    private static final int[][] G_ASMALL = {{0b00000},{0b00000},{0b01100},{0b10010},{0b11110},{0b10010},{0b10010}};
+    private static final int[][] G_MSMALL = {{0b00000},{0b00000},{0b10101},{0b11111},{0b10101},{0b10001},{0b10001}};
 
     // ── Constructor ───────────────────────────────────────────────────────────
     public CustomLoadingOverlay(
@@ -77,22 +110,14 @@ public class CustomLoadingOverlay extends Overlay {
             h = Mth.clamp(h + (int)(rng.nextFloat() * 3) - 1, 2, WORLD_HEIGHT - 1);
             terrain[c] = h;
             for (int row = 0; row < h; row++) {
-                if      (row == h - 1)              blockType[c][row] = 2;
-                else if (row >= h - 3)              blockType[c][row] = 0;
-                else if (rng.nextFloat() < 0.07f)   blockType[c][row] = 4;
-                else                                blockType[c][row] = 1;
+                if      (row == h - 1)            blockType[c][row] = 2;
+                else if (row >= h - 3)            blockType[c][row] = 0;
+                else if (rng.nextFloat() < 0.07f) blockType[c][row] = 4;
+                else                              blockType[c][row] = 1;
             }
         }
 
-        // Torches
-        for (int i = 0; i < TORCH_COUNT; i++) {
-            torches[i][0] = rng.nextFloat();
-            torches[i][1] = 0.4f + rng.nextFloat() * 0.2f;
-            torches[i][2] = rng.nextFloat() * 6.28f;
-            torches[i][3] = 1.4f + rng.nextFloat() * 2.2f;
-        }
-
-        // Particles
+        // Particles only — no torches
         for (int i = 0; i < PARTICLE_COUNT; i++) {
             particles[i][0] = rng.nextFloat();
             particles[i][1] = rng.nextFloat();
@@ -103,13 +128,10 @@ public class CustomLoadingOverlay extends Overlay {
         }
     }
 
-    // ── Overlay lifecycle ─────────────────────────────────────────────────────
-
     @Override
     public boolean isPauseScreen() { return true; }
 
     // ── Render ────────────────────────────────────────────────────────────────
-
     @Override
     public void render(GuiGraphics gfx, int mouseX, int mouseY, float delta) {
         long  now = System.currentTimeMillis();
@@ -118,18 +140,16 @@ public class CustomLoadingOverlay extends Overlay {
         int W = mc.getWindow().getGuiScaledWidth();
         int H = mc.getWindow().getGuiScaledHeight();
 
-        // ── Advance real progress ─────────────────────────────────────────────
+        // Progress
         float realProgress = (float) reload.getActualProgress();
         displayProgress = Math.max(displayProgress,
                 displayProgress + (realProgress - displayProgress) * 0.1f);
         displayProgress = Mth.clamp(displayProgress, 0f, 1f);
 
-        // ── Check if reload finished ──────────────────────────────────────────
         if (!reloadDone && reload.isDone()) {
             reloadDone      = true;
             displayProgress = 1f;
         }
-
         if (reloadDone && !finishing) {
             finishing = true;
             try {
@@ -139,73 +159,136 @@ public class CustomLoadingOverlay extends Overlay {
                 onFinish.accept(Optional.of(t));
             }
         }
-
-        // ── Fade out after finishing ──────────────────────────────────────────
         if (finishing) {
             fadeAlpha -= delta * 0.04f;
-            if (fadeAlpha <= 0f) {
-                mc.setOverlay(null);
-                return;
-            }
+            if (fadeAlpha <= 0f) { mc.setOverlay(null); return; }
         }
 
-        // ── Draw background layers ────────────────────────────────────────────
+        // Background — no torch blooms or flames
         drawSkyGradient(gfx, W, H);
         drawStars(gfx, W, H, sec);
-        drawTorchBlooms(gfx, W, H, sec);
         drawBlockWorld(gfx, W, H, sec);
-        drawTorchFlames(gfx, W, H, sec);
         drawParticles(gfx, W, H, sec);
         drawScanLines(gfx, W, H);
         drawVignette(gfx, W, H);
 
-        // ── Centre panel ─────────────────────────────────────────────────────
+        // ── Panel ─────────────────────────────────────────────────────────────
         int panelW = Math.min(420, W - 60);
-        int panelH = 190;
+        int panelH = 210;
         int panelX = (W - panelW) / 2;
         int panelY = (H - panelH) / 2 - 8;
         drawPanel(gfx, panelX, panelY, panelW, panelH, now);
 
-        // Title — only draw once font is ready
-        int lx = W / 2, ly = panelY + 28;
-        if (isFontReady()) {
-            gfx.drawCenteredString(mc.font, "Loading Resources", lx, ly,      0xFFDDBBFF);
-            gfx.drawCenteredString(mc.font, "Please wait...",    lx, ly + 18, 0xFF9988BB);
+        // ── "FABRIC" logo — 2× scale (smaller) ───────────────────────────────
+        int logoScale   = 2;                              // was 4, now 2
+        int[][][] logoGlyphs = { G_F, G_A, G_B, G_R, G_I, G_C };
+        int glyphW      = 5 * logoScale;
+        int glyphH      = 7 * logoScale;
+        int logoSpacing = logoScale;
+        int logoTotalW  = logoGlyphs.length * glyphW + (logoGlyphs.length - 1) * logoSpacing;
+        int lx          = (W - logoTotalW) / 2;
+        int ly          = panelY + 20;
+        for (int gi = 0; gi < logoGlyphs.length; gi++) {
+            float shimmer  = (float)Math.sin(sec * 2.2f + gi * 0.55f) * 0.5f + 0.5f;
+            int   glyphCol = lerpColor(0xDDBBFF, 0xFFEEFF, shimmer);
+            drawGlyph(gfx, logoGlyphs[gi],
+                      lx + gi * (glyphW + logoSpacing), ly,
+                      logoScale, 0xFF000000 | glyphCol);
         }
 
-        // Separator
-        gfx.fill(panelX + 20, ly + 33, panelX + panelW - 20, ly + 34, 0x449B72CF);
+        // ── "LOADING..." subtitle — 1× scale (smaller) ───────────────────────
+        int subScale   = 1;                               // was 2, now 1
+        int subGlyphW  = 5 * subScale;
+        int subSpacing = subScale;
+        int dotCount   = (int)((now / 500) % 4);
+        int[][][] baseGlyphs = { G_L, G_O, G_A, G_D, G_I, G_N, G_G };
+        int subSlots   = baseGlyphs.length + (dotCount > 0 ? 1 + dotCount : 0);
+        int subTotalW  = subSlots * subGlyphW + (subSlots - 1) * subSpacing;
+        int sx         = (W - subTotalW) / 2;
+        int sy         = ly + glyphH + 8;
+        for (int gi = 0; gi < baseGlyphs.length; gi++) {
+            drawGlyph(gfx, baseGlyphs[gi],
+                      sx + gi * (subGlyphW + subSpacing), sy,
+                      subScale, 0xFF9988BB);
+        }
+        if (dotCount > 0) {
+            int base = baseGlyphs.length + 1;
+            for (int di = 0; di < dotCount; di++) {
+                float dotFade = (di == dotCount - 1) ? Math.min(1f, (now % 500) / 300f) : 1f;
+                int   da      = (int)(dotFade * 180);
+                drawGlyph(gfx, G_DOT,
+                          sx + (base + di) * (subGlyphW + subSpacing), sy,
+                          subScale, (da << 24) | 0x9988BB);
+            }
+        }
 
-        // Loading bar
+        // ── Separator ─────────────────────────────────────────────────────────
+        int sepY = sy + 7 * subScale + 14;               // extra gap pushed down
+        gfx.fill(panelX + 20, sepY, panelX + panelW - 20, sepY + 1, 0x449B72CF);
+
+        // ── Percentage counter — 2× scale, pushed down ────────────────────────
+        int pct        = Math.min((int)(displayProgress * 100), 100);
+        int pctScale   = 2;
+        int pctGlyphW  = 5 * pctScale;
+        int pctSpacing = pctScale;
+        String pctStr  = pct + "%";
+        int[][][] pctGlyphs = new int[pctStr.length()][][];
+        for (int i = 0; i < pctStr.length(); i++) {
+            char ch = pctStr.charAt(i);
+            pctGlyphs[i] = (ch >= '0' && ch <= '9') ? G_DIGITS[ch - '0'] : G_PCT;
+        }
+        int pctTotalW = pctGlyphs.length * pctGlyphW + (pctGlyphs.length - 1) * pctSpacing;
+        int px0       = (W - pctTotalW) / 2;
+
+        // ── Loading bar — placed below percentage, further down ───────────────
         int barW = panelW - 60, barH = 10;
-        int barX = panelX + 30, barY = panelY + panelH - 54;
+        int barX = panelX + 30;
+        int barY = sepY + 36;                            // was sepY+12, now +36
+        int py0  = barY - 7 * pctScale - 8;             // percentage sits just above bar
+
+        int pctCol = lerpColor(0x9B72CF, 0xEEEEEE, displayProgress);
+        for (int gi = 0; gi < pctGlyphs.length; gi++) {
+            drawGlyph(gfx, pctGlyphs[gi],
+                      px0 + gi * (pctGlyphW + pctSpacing), py0,
+                      pctScale, 0xFF000000 | pctCol);
+        }
+
         drawLoadingBar(gfx, barX, barY, barW, barH, now);
 
-        // Status labels — only when font ready
-        if (isFontReady()) {
-            gfx.drawCenteredString(mc.font, getStatusText(displayProgress), W / 2, barY + 18, COL_TEXT_DIM);
-            gfx.drawCenteredString(mc.font, (int)(displayProgress * 100) + "%", W / 2, barY - 14, COL_TEXT);
-        }
-
-        // ── Footer ───────────────────────────────────────────────────────────
+        // Footer
         drawFooter(gfx, W, H, now);
 
-        // ── Fade overlay ─────────────────────────────────────────────────────
+        // Fade
         if (fadeAlpha < 1f) {
-            int blackAlpha = (int)((1f - fadeAlpha) * 255);
-            gfx.fill(0, 0, W, H, blackAlpha << 24);
+            gfx.fill(0, 0, W, H, (int)((1f - fadeAlpha) * 255) << 24);
         }
     }
 
     // =========================================================================
-    // Background layers
+    // Pixel glyph renderer
+    // =========================================================================
+
+    private void drawGlyph(GuiGraphics gfx, int[][] glyph, int x, int y, int scale, int colour) {
+        for (int row = 0; row < glyph.length; row++) {
+            int bits = glyph[row][0];
+            for (int col = 0; col < 5; col++) {
+                if (((bits >> (4 - col)) & 1) == 1) {
+                    int px = x + col * scale;
+                    int py = y + row * scale;
+                    gfx.fill(px, py, px + scale, py + scale, colour);
+                }
+            }
+        }
+    }
+
+    // =========================================================================
+    // Background layers (torches removed)
     // =========================================================================
 
     private void drawSkyGradient(GuiGraphics gfx, int W, int H) {
-        int bands = 40;
-        for (int i = 0; i < bands; i++) {
-            float t  = i / (float) bands;
-            int   y0 = (int)(t * H), y1 = (int)((i + 1f) / bands * H);
+        for (int i = 0; i < 40; i++) {
+            float t  = i / 40f;
+            int   y0 = (int)(t * H), y1 = (int)((i + 1f) / 40f * H);
             int   c  = (t < 0.5f)
                      ? lerpColor(COL_SKY_TOP, COL_SKY_MID, t * 2f)
                      : lerpColor(COL_SKY_MID, COL_SKY_BOT, (t - 0.5f) * 2f);
@@ -222,83 +305,30 @@ public class CustomLoadingOverlay extends Overlay {
                     Math.max(0f, (float)Math.sin(sec * (0.7f + rp * 1.6f) + rp * 6.28f)), 2);
             int a  = (int)(tw * (rp < 0.08f ? 230 : 130));
             int sz = rp < 0.04f ? 2 : 1;
-            int x  = (int)(rx * W), y = (int)(ry * H);
-            gfx.fill(x, y, x + sz, y + sz, (a << 24) | 0xCCBBFF);
-        }
-    }
-
-    private void drawTorchBlooms(GuiGraphics gfx, int W, int H, float sec) {
-        int baseY = worldBaseY(H);
-        for (float[] t : torches) {
-            float f1 = 0.5f  + 0.5f  * (float)Math.sin(sec * t[3] + t[2]);
-            float f2 = 0.55f + 0.45f * (float)Math.sin(sec * t[3] * 1.8f + t[2] + 1.3f);
-            int tx = (int)(t[0] * W);
-            int ty = baseY - (int)(t[1] * BLOCK_PX * WORLD_HEIGHT);
-
-            int[][] rings = {
-                {120, 0xFF4400, (int)(f1 * 16)},
-                { 70, 0xFF7700, (int)(f1 * 26)},
-                { 35, 0xFFBB11, (int)(f2 * 52)},
-                { 14, 0xFFEE44, (int)(f1 * 80)},
-            };
-            for (int[] ring : rings) {
-                for (int r = ring[0]; r > 0; r -= 5) {
-                    float fo = (float) r / ring[0];
-                    int a = (int)(ring[2] * (1f - fo) * 0.65f);
-                    if (a < 1) continue;
-                    int rh = (int)(r * 0.52f);
-                    gfx.fill(tx - r, ty - rh, tx + r, ty + rh, (a << 24) | ring[1]);
-                }
-            }
+            gfx.fill((int)(rx * W), (int)(ry * H),
+                     (int)(rx * W) + sz, (int)(ry * H) + sz, (a << 24) | 0xCCBBFF);
         }
     }
 
     private void drawBlockWorld(GuiGraphics gfx, int W, int H, float sec) {
         int   baseY  = worldBaseY(H);
         float scroll = (sec * 20f) % (BLOCK_PX * WORLD_COLS);
-
         for (int c = 0; c < WORLD_COLS + 2; c++) {
             int sx = (int)(c * BLOCK_PX - scroll);
             if (sx + BLOCK_PX < 0 || sx > W) continue;
-
             int col = ((c % WORLD_COLS) + WORLD_COLS) % WORLD_COLS;
             int h   = terrain[col];
-
             for (int row = 0; row < h; row++) {
                 int by = baseY - (row + 1) * BLOCK_PX;
-                int bt = blockType[col][row];
-                int bc = BLOCK_PALETTE[Math.min(bt, BLOCK_PALETTE.length - 1)];
+                int bc = BLOCK_PALETTE[Math.min(blockType[col][row], BLOCK_PALETTE.length - 1)];
                 int fc = (row == h - 1) ? lighten(bc, 0.28f) : bc;
-
                 gfx.fill(sx, by, sx + BLOCK_PX, by + BLOCK_PX, 0xFF000000 | fc);
                 gfx.fill(sx + BLOCK_PX - 2, by, sx + BLOCK_PX, by + BLOCK_PX, 0x2A000000);
                 gfx.fill(sx, by + BLOCK_PX - 2, sx + BLOCK_PX, by + BLOCK_PX, 0x1A000000);
                 gfx.fill(sx, by, sx + BLOCK_PX, by + 1, 0x15FFFFFF);
                 gfx.fill(sx, by, sx + 1, by + BLOCK_PX, 0x15FFFFFF);
             }
-
-            if (baseY < H)
-                gfx.fill(sx, baseY, sx + BLOCK_PX, H, 0xFF130C00);
-        }
-    }
-
-    private void drawTorchFlames(GuiGraphics gfx, int W, int H, float sec) {
-        int baseY = worldBaseY(H);
-        for (float[] t : torches) {
-            float f1 = 0.55f + 0.45f * (float)Math.sin(sec * t[3] + t[2]);
-            float f2 = 0.5f  + 0.5f  * (float)Math.sin(sec * t[3] * 2.5f + t[2] + 2.2f);
-            int tx = (int)(t[0] * W);
-            int ty = baseY - (int)(t[1] * BLOCK_PX * WORLD_HEIGHT);
-
-            gfx.fill(tx - 1, ty - 7, tx + 2, ty, 0xDD7A4A22);
-
-            int[][] flames = {
-                {4, 9,  0xFF5500, (int)(f1 * 190)},
-                {3, 6,  0xFF8800, (int)(f2 * 220)},
-                {1, 3,  0xFFDD11, (int)(f1 * 255)},
-            };
-            for (int[] fl : flames)
-                gfx.fill(tx - fl[0], ty - 7 - fl[1], tx + fl[0] + 1, ty - 7, (fl[3] << 24) | fl[2]);
+            if (baseY < H) gfx.fill(sx, baseY, sx + BLOCK_PX, H, 0xFF130C00);
         }
     }
 
@@ -317,8 +347,7 @@ public class CustomLoadingOverlay extends Overlay {
     }
 
     private void drawScanLines(GuiGraphics gfx, int W, int H) {
-        for (int y = 0; y < H; y += 2)
-            gfx.fill(0, y, W, y + 1, 0x09000000);
+        for (int y = 0; y < H; y += 2) gfx.fill(0, y, W, y + 1, 0x09000000);
     }
 
     private void drawVignette(GuiGraphics gfx, int W, int H) {
@@ -340,9 +369,8 @@ public class CustomLoadingOverlay extends Overlay {
     private void drawPanel(GuiGraphics gfx, int x, int y, int w, int h, long now) {
         gfx.fill(x + 5, y + 6, x + w + 5, y + h + 6, 0x77000000);
         gfx.fill(x, y, x + w, y + h, 0xF00B0B18);
-        float phase = (now / 1500f) % 1f;
         int bCol = lerpColor(0xFF3A2B6E, 0xFF9B72CF,
-                (float)Math.abs(Math.sin(phase * Math.PI)));
+                (float)Math.abs(Math.sin((now / 1500f) * Math.PI)));
         drawBorderLine(gfx, x, y, w, h, bCol);
         gfx.fill(x + 1, y + 1, x + w - 1, y + 2, 0x1AFFFFFF);
     }
@@ -350,29 +378,24 @@ public class CustomLoadingOverlay extends Overlay {
     private void drawLoadingBar(GuiGraphics gfx, int x, int y, int w, int h, long now) {
         gfx.fill(x - 1, y - 1, x + w + 1, y + h + 1, 0xFF2A2A44);
         gfx.fill(x, y, x + w, y + h, COL_BAR_BG);
-
         int fillW = (int)(w * displayProgress);
         if (fillW > 0) {
             for (int px = 0; px < fillW; px++) {
-                float t   = (float) px / Math.max(1, fillW);
-                int   col = lerpColor(0xFF6A44AA, COL_BAR_FILL, t);
+                int col = lerpColor(0xFF6A44AA, COL_BAR_FILL, (float) px / Math.max(1, fillW));
                 gfx.fill(x + px, y, x + px + 1, y + h, 0xFF000000 | col);
             }
-
             float sw  = (now % 1500) / 1500f;
             int   shP = x + (int)(sw * fillW);
             int   shW = Math.min(44, fillW);
             for (int si = 0; si < shW; si++) {
                 float e = 1f - Math.abs(si / (shW * 0.5f) - 1f);
-                gfx.fill(shP - shW / 2 + si, y, shP - shW / 2 + si + 1, y + h,
+                gfx.fill(shP - shW/2 + si, y, shP - shW/2 + si + 1, y + h,
                          ((int)(e * 55) << 24) | 0xFFFFFF);
             }
-
             gfx.fill(x + fillW - 2, y, x + fillW, y + h, COL_BAR_SHINE);
         }
-
-        gfx.fill(x - 3,     y - 1, x,         y + h + 1, 0xFF9B72CF);
-        gfx.fill(x + w,     y - 1, x + w + 3, y + h + 1, 0xFF444466);
+        gfx.fill(x - 3, y - 1, x,         y + h + 1, 0xFF9B72CF);
+        gfx.fill(x + w, y - 1, x + w + 3, y + h + 1, 0xFF444466);
     }
 
     // =========================================================================
@@ -380,21 +403,38 @@ public class CustomLoadingOverlay extends Overlay {
     // =========================================================================
 
     private void drawFooter(GuiGraphics gfx, int W, int H, long now) {
-        int fh = 20, fy = H - fh;
+        int fh = 22, fy = H - fh;
         gfx.fill(0, fy, W, H, 0xCC04040C);
-        float phase = (now / 2200f) % 1f;
         int lineCol = lerpColor(0xFF1E1050, 0xFF6B44AA,
-                (float)Math.abs(Math.sin(phase * Math.PI)));
+                (float)Math.abs(Math.sin((now / 2200f) * Math.PI)));
         gfx.fill(0, fy, W, fy + 1, 0xFF000000 | lineCol);
-        gfx.fill(0,     fy, 2,     H, 0xFF6B44AA);
-        gfx.fill(W - 2, fy, W,     H, 0xFF6B44AA);
+        gfx.fill(0,     fy, 2, H,  0xFF6B44AA);
+        gfx.fill(W - 2, fy, W, H,  0xFF6B44AA);
 
-        if (isFontReady()) {
-            float pulse  = 0.60f + 0.40f * (float)Math.sin(now / 1900f);
-            int   tAlpha = (int)(pulse * 195);
-            gfx.drawCenteredString(mc.font,
-                    "(C) 2024  biuvietnam  |  All rights reserved",
-                    W / 2, fy + 5, (tAlpha << 24) | 0x9988CC);
+        int[][][] footerGlyphs = {
+            G_COPY, G_SPC,
+            G_DIGITS[2], G_DIGITS[0], G_DIGITS[2], G_DIGITS[4],
+            G_SPC, G_SPC,
+            G_BSMALL, G_ISMALL, G_USMALL, G_VSMALL, G_ISMALL,
+            G_ESMALL, G_TSMALL, G_NSMALL, G_ASMALL, G_MSMALL,
+            G_SPC, G_PIPE, G_SPC,
+            G_A, G_L, G_L
+        };
+
+        int fScale   = 1;
+        int fGlyphW  = 5 * fScale;
+        int fSpacing = fScale;
+        int fTotalW  = footerGlyphs.length * (fGlyphW + fSpacing) - fSpacing;
+        int fx0      = (W - fTotalW) / 2;
+        int fy0      = fy + (fh - 7 * fScale) / 2;
+
+        float pulse  = 0.55f + 0.45f * (float)Math.sin(now / 1900f);
+        int   tAlpha = (int)(pulse * 200);
+
+        for (int gi = 0; gi < footerGlyphs.length; gi++) {
+            drawGlyph(gfx, footerGlyphs[gi],
+                      fx0 + gi * (fGlyphW + fSpacing), fy0,
+                      fScale, (tAlpha << 24) | 0x9988CC);
         }
     }
 
@@ -402,14 +442,7 @@ public class CustomLoadingOverlay extends Overlay {
     // Utilities
     // =========================================================================
 
-    /** Returns true only when Minecraft's font renderer is initialised. */
-    private boolean isFontReady() {
-        return mc.font != null;
-    }
-
-    private int worldBaseY(int H) {
-        return H - (int)(H * 0.04f);
-    }
+    private int worldBaseY(int H) { return H - (int)(H * 0.04f); }
 
     private void drawBorderLine(GuiGraphics gfx, int x, int y, int w, int h, int col) {
         gfx.fill(x,         y,         x + w,     y + 1,     col);
@@ -441,15 +474,5 @@ public class CustomLoadingOverlay extends Overlay {
         x *= 0xc4ceb9fe1a85ec53L;
         x ^= (x >>> 33);
         return (x & 0x7FFFFFFFFFFFFFFFL) / (float)0x7FFFFFFFFFFFFFFFL;
-    }
-
-    private String getStatusText(float p) {
-        if (p < 0.10f) return "Starting up\u2026";
-        if (p < 0.30f) return "Loading core assets\u2026";
-        if (p < 0.55f) return "Loading textures & models\u2026";
-        if (p < 0.75f) return "Stitching texture atlas\u2026";
-        if (p < 0.90f) return "Baking block models\u2026";
-        if (p < 0.99f) return "Finishing up\u2026";
-        return "Done!";
     }
 }
