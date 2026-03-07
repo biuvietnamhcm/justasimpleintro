@@ -1,32 +1,26 @@
 package com.example.intro;
 
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.gui.screens.Screen;
-import net.minecraft.network.chat.Component;
+import net.minecraft.client.gui.screens.Overlay;
+import net.minecraft.server.packs.resources.ReloadInstance;
+import net.minecraft.util.Mth;
 
-/**
- * Phase 1 — Fabric Preload Screen
- *
- * Animated background layers (back to front):
- *   1. Dark night-sky gradient
- *   2. Twinkling stars
- *   3. Torch soft light blooms
- *   4. Scrolling Minecraft block-world terrain (infinite scroll left)
- *   5. Torch flame sprites on top of blocks
- *   6. Falling dust / ember particles
- *   7. Subtle CRT scan-lines
- *   8. Edge vignette
- *
- * Centre panel: Fabric logo + animated shimmer loading bar.
- * Footer: © biuvietnam copyright strip.
- */
-public class FabricPreloadScreen extends Screen {
+import java.util.Optional;
+import java.util.Random;
+import java.util.function.Consumer;
 
-    // ── Shown-once guard ──────────────────────────────────────────────────────
-    public static boolean s_shown = false;
+public class CustomLoadingOverlay extends Overlay {
 
-    // ── Timing ────────────────────────────────────────────────────────────────
-    private static final long PRELOAD_DURATION_MS = 3_200;
+    // ── Real loading state ────────────────────────────────────────────────────
+    private final Minecraft                        mc;
+    private final ReloadInstance                   reload;
+    private final Consumer<Optional<Throwable>>    onFinish;
+
+    private float   displayProgress = 0f;
+    private float   fadeAlpha       = 1f;
+    private boolean reloadDone      = false;
+    private boolean finishing       = false;
 
     // ── Block world ───────────────────────────────────────────────────────────
     private static final int WORLD_COLS   = 72;
@@ -48,12 +42,10 @@ public class FabricPreloadScreen extends Screen {
 
     // ── Torches ───────────────────────────────────────────────────────────────
     private static final int TORCH_COUNT = 7;
-    // [xFrac, relativeHeightFrac, phase, flickerSpeed]
     private final float[][] torches = new float[TORCH_COUNT][4];
 
     // ── Particles ─────────────────────────────────────────────────────────────
     private static final int PARTICLE_COUNT = 130;
-    // [xFrac, yFrac, speed, size, alphaScale, type(0=dust,1=ember)]
     private final float[][] particles = new float[PARTICLE_COUNT][6];
 
     // ── Colours ───────────────────────────────────────────────────────────────
@@ -66,26 +58,29 @@ public class FabricPreloadScreen extends Screen {
     private static final int COL_TEXT      = 0xFFEEEEEE;
     private static final int COL_TEXT_DIM  = 0xFF888899;
 
-    // ── State ─────────────────────────────────────────────────────────────────
-    private long    startTime = -1;
-    private float   progress  = 0f;
-    private boolean advanced  = false;
-
     // ── Constructor ───────────────────────────────────────────────────────────
-    public FabricPreloadScreen() {
-        super(Component.literal("Loading\u2026"));
-        java.util.Random rng = new java.util.Random(20240101L);
+    public CustomLoadingOverlay(
+            Minecraft mc,
+            ReloadInstance reload,
+            Consumer<Optional<Throwable>> onFinish,
+            boolean fadeIn) {
 
-        // Terrain generation — random walk
+        this.mc       = mc;
+        this.reload   = reload;
+        this.onFinish = onFinish;
+
+        Random rng = new Random(20240101L);
+
+        // Terrain
         int h = WORLD_HEIGHT / 2;
         for (int c = 0; c < WORLD_COLS; c++) {
-            h = Math.max(2, Math.min(WORLD_HEIGHT - 1, h + (int)(rng.nextFloat() * 3) - 1));
+            h = Mth.clamp(h + (int)(rng.nextFloat() * 3) - 1, 2, WORLD_HEIGHT - 1);
             terrain[c] = h;
             for (int row = 0; row < h; row++) {
-                if      (row == h - 1)          blockType[c][row] = 2; // grass top
-                else if (row >= h - 3)          blockType[c][row] = 0; // dirt
-                else if (rng.nextFloat() < 0.07f) blockType[c][row] = 4; // ore vein / bedrock
-                else                            blockType[c][row] = 1; // stone
+                if      (row == h - 1)              blockType[c][row] = 2;
+                else if (row >= h - 3)              blockType[c][row] = 0;
+                else if (rng.nextFloat() < 0.07f)   blockType[c][row] = 4;
+                else                                blockType[c][row] = 1;
             }
         }
 
@@ -108,27 +103,53 @@ public class FabricPreloadScreen extends Screen {
         }
     }
 
-    // ── Lifecycle ─────────────────────────────────────────────────────────────
-    @Override
-    protected void init() {
-        s_shown   = true;
-        startTime = System.currentTimeMillis();
-    }
+    // ── Overlay lifecycle ─────────────────────────────────────────────────────
 
     @Override
-    public boolean shouldCloseOnEsc() { return false; }
+    public boolean isPauseScreen() { return true; }
 
     // ── Render ────────────────────────────────────────────────────────────────
+
     @Override
     public void render(GuiGraphics gfx, int mouseX, int mouseY, float delta) {
-        long  now     = System.currentTimeMillis();
-        long  elapsed = (startTime < 0) ? 0 : now - startTime;
-        float rawProg = Math.min(1f, (float) elapsed / PRELOAD_DURATION_MS);
-        progress      = easeOutCubic(rawProg);
-
-        int W = width, H = height;
+        long  now = System.currentTimeMillis();
         float sec = now / 1000f;
 
+        int W = mc.getWindow().getGuiScaledWidth();
+        int H = mc.getWindow().getGuiScaledHeight();
+
+        // ── Advance real progress ─────────────────────────────────────────────
+        float realProgress = (float) reload.getActualProgress();
+        displayProgress = Math.max(displayProgress,
+                displayProgress + (realProgress - displayProgress) * 0.1f);
+        displayProgress = Mth.clamp(displayProgress, 0f, 1f);
+
+        // ── Check if reload finished ──────────────────────────────────────────
+        if (!reloadDone && reload.isDone()) {
+            reloadDone      = true;
+            displayProgress = 1f;
+        }
+
+        if (reloadDone && !finishing) {
+            finishing = true;
+            try {
+                reload.checkExceptions();
+                onFinish.accept(Optional.empty());
+            } catch (Throwable t) {
+                onFinish.accept(Optional.of(t));
+            }
+        }
+
+        // ── Fade out after finishing ──────────────────────────────────────────
+        if (finishing) {
+            fadeAlpha -= delta * 0.04f;
+            if (fadeAlpha <= 0f) {
+                mc.setOverlay(null);
+                return;
+            }
+        }
+
+        // ── Draw background layers ────────────────────────────────────────────
         drawSkyGradient(gfx, W, H);
         drawStars(gfx, W, H, sec);
         drawTorchBlooms(gfx, W, H, sec);
@@ -139,36 +160,40 @@ public class FabricPreloadScreen extends Screen {
         drawVignette(gfx, W, H);
 
         // ── Centre panel ─────────────────────────────────────────────────────
-        int panelW = Math.min(400, W - 60);
-        int panelH = 200;
+        int panelW = Math.min(420, W - 60);
+        int panelH = 190;
         int panelX = (W - panelW) / 2;
         int panelY = (H - panelH) / 2 - 8;
         drawPanel(gfx, panelX, panelY, panelW, panelH, now);
 
-        // Logo
-        int lx = W / 2, ly = panelY + 26;
-        gfx.drawCenteredString(font, "FABRIC",  lx, ly,      0xFFDDBBFF);
-        gfx.drawCenteredString(font, "MOD LOADER",      lx, ly + 18, 0xFF9988BB);
+        // Title — only draw once font is ready
+        int lx = W / 2, ly = panelY + 28;
+        if (isFontReady()) {
+            gfx.drawCenteredString(mc.font, "Loading Resources", lx, ly,      0xFFDDBBFF);
+            gfx.drawCenteredString(mc.font, "Please wait...",    lx, ly + 18, 0xFF9988BB);
+        }
 
-        // Thin separator
-        gfx.fill(panelX + 20, ly + 34, panelX + panelW - 20, ly + 35, 0x449B72CF);
+        // Separator
+        gfx.fill(panelX + 20, ly + 33, panelX + panelW - 20, ly + 34, 0x449B72CF);
 
         // Loading bar
-        int barW = panelW - 60, barH = 8;
-        int barX = panelX + 30, barY = panelY + panelH - 56;
+        int barW = panelW - 60, barH = 10;
+        int barX = panelX + 30, barY = panelY + panelH - 54;
         drawLoadingBar(gfx, barX, barY, barW, barH, now);
 
-        // Status + percentage
-        gfx.drawCenteredString(font, getStatusText(rawProg), W / 2, barY + 16, COL_TEXT_DIM);
-        gfx.drawCenteredString(font, (int)(progress * 100) + "%", W / 2, barY - 13, COL_TEXT);
+        // Status labels — only when font ready
+        if (isFontReady()) {
+            gfx.drawCenteredString(mc.font, getStatusText(displayProgress), W / 2, barY + 18, COL_TEXT_DIM);
+            gfx.drawCenteredString(mc.font, (int)(displayProgress * 100) + "%", W / 2, barY - 14, COL_TEXT);
+        }
 
         // ── Footer ───────────────────────────────────────────────────────────
         drawFooter(gfx, W, H, now);
 
-        // ── Advance ──────────────────────────────────────────────────────────
-        if (rawProg >= 1f && !advanced) {
-            advanced = true;
-            ScreenUtil.setScreen(new VideoScreen());
+        // ── Fade overlay ─────────────────────────────────────────────────────
+        if (fadeAlpha < 1f) {
+            int blackAlpha = (int)((1f - fadeAlpha) * 255);
+            gfx.fill(0, 0, W, H, blackAlpha << 24);
         }
     }
 
@@ -189,16 +214,15 @@ public class FabricPreloadScreen extends Screen {
     }
 
     private void drawStars(GuiGraphics gfx, int W, int H, float sec) {
-        int count = 180;
-        for (int i = 0; i < count; i++) {
+        for (int i = 0; i < 180; i++) {
             float rx = hash(i * 3L);
             float ry = hash(i * 3L + 1) * 0.58f;
             float rp = hash(i * 3L + 2);
             float tw = 0.3f + 0.7f * (float)Math.pow(
                     Math.max(0f, (float)Math.sin(sec * (0.7f + rp * 1.6f) + rp * 6.28f)), 2);
-            int a = (int)(tw * (rp < 0.08f ? 230 : 130));
+            int a  = (int)(tw * (rp < 0.08f ? 230 : 130));
             int sz = rp < 0.04f ? 2 : 1;
-            int x = (int)(rx * W), y = (int)(ry * H);
+            int x  = (int)(rx * W), y = (int)(ry * H);
             gfx.fill(x, y, x + sz, y + sz, (a << 24) | 0xCCBBFF);
         }
     }
@@ -206,12 +230,11 @@ public class FabricPreloadScreen extends Screen {
     private void drawTorchBlooms(GuiGraphics gfx, int W, int H, float sec) {
         int baseY = worldBaseY(H);
         for (float[] t : torches) {
-            float f1 = 0.5f + 0.5f * (float)Math.sin(sec * t[3] + t[2]);
+            float f1 = 0.5f  + 0.5f  * (float)Math.sin(sec * t[3] + t[2]);
             float f2 = 0.55f + 0.45f * (float)Math.sin(sec * t[3] * 1.8f + t[2] + 1.3f);
-            int   tx = (int)(t[0] * W);
-            int   ty = baseY - (int)(t[1] * BLOCK_PX * WORLD_HEIGHT);
+            int tx = (int)(t[0] * W);
+            int ty = baseY - (int)(t[1] * BLOCK_PX * WORLD_HEIGHT);
 
-            // Concentric glow rings, orange → yellow
             int[][] rings = {
                 {120, 0xFF4400, (int)(f1 * 16)},
                 { 70, 0xFF7700, (int)(f1 * 26)},
@@ -219,20 +242,19 @@ public class FabricPreloadScreen extends Screen {
                 { 14, 0xFFEE44, (int)(f1 * 80)},
             };
             for (int[] ring : rings) {
-                int rad = ring[0], col = ring[1], alpha = ring[2];
-                for (int r = rad; r > 0; r -= 5) {
-                    float fo = (float) r / rad;
-                    int a = (int)(alpha * (1f - fo) * 0.65f);
+                for (int r = ring[0]; r > 0; r -= 5) {
+                    float fo = (float) r / ring[0];
+                    int a = (int)(ring[2] * (1f - fo) * 0.65f);
                     if (a < 1) continue;
                     int rh = (int)(r * 0.52f);
-                    gfx.fill(tx - r, ty - rh, tx + r, ty + rh, (a << 24) | col);
+                    gfx.fill(tx - r, ty - rh, tx + r, ty + rh, (a << 24) | ring[1]);
                 }
             }
         }
     }
 
     private void drawBlockWorld(GuiGraphics gfx, int W, int H, float sec) {
-        int baseY    = worldBaseY(H);
+        int   baseY  = worldBaseY(H);
         float scroll = (sec * 20f) % (BLOCK_PX * WORLD_COLS);
 
         for (int c = 0; c < WORLD_COLS + 2; c++) {
@@ -243,24 +265,18 @@ public class FabricPreloadScreen extends Screen {
             int h   = terrain[col];
 
             for (int row = 0; row < h; row++) {
-                int by  = baseY - (row + 1) * BLOCK_PX;
-                int bt  = blockType[col][row];
-                int bc  = BLOCK_PALETTE[Math.min(bt, BLOCK_PALETTE.length - 1)];
-                int fc  = (row == h - 1) ? lighten(bc, 0.28f) : bc;
+                int by = baseY - (row + 1) * BLOCK_PX;
+                int bt = blockType[col][row];
+                int bc = BLOCK_PALETTE[Math.min(bt, BLOCK_PALETTE.length - 1)];
+                int fc = (row == h - 1) ? lighten(bc, 0.28f) : bc;
 
                 gfx.fill(sx, by, sx + BLOCK_PX, by + BLOCK_PX, 0xFF000000 | fc);
-
-                // Right shadow
                 gfx.fill(sx + BLOCK_PX - 2, by, sx + BLOCK_PX, by + BLOCK_PX, 0x2A000000);
-                // Bottom shadow
                 gfx.fill(sx, by + BLOCK_PX - 2, sx + BLOCK_PX, by + BLOCK_PX, 0x1A000000);
-                // Top highlight line
                 gfx.fill(sx, by, sx + BLOCK_PX, by + 1, 0x15FFFFFF);
-                // Left highlight line
                 gfx.fill(sx, by, sx + 1, by + BLOCK_PX, 0x15FFFFFF);
             }
 
-            // Ground fill
             if (baseY < H)
                 gfx.fill(sx, baseY, sx + BLOCK_PX, H, 0xFF130C00);
         }
@@ -274,20 +290,15 @@ public class FabricPreloadScreen extends Screen {
             int tx = (int)(t[0] * W);
             int ty = baseY - (int)(t[1] * BLOCK_PX * WORLD_HEIGHT);
 
-            // Torch stick
             gfx.fill(tx - 1, ty - 7, tx + 2, ty, 0xDD7A4A22);
 
-            // Flame layers
             int[][] flames = {
                 {4, 9,  0xFF5500, (int)(f1 * 190)},
                 {3, 6,  0xFF8800, (int)(f2 * 220)},
                 {1, 3,  0xFFDD11, (int)(f1 * 255)},
             };
-            for (int[] fl : flames) {
-                gfx.fill(tx - fl[0], ty - 7 - fl[1],
-                         tx + fl[0] + 1, ty - 7,
-                         (fl[3] << 24) | fl[2]);
-            }
+            for (int[] fl : flames)
+                gfx.fill(tx - fl[0], ty - 7 - fl[1], tx + fl[0] + 1, ty - 7, (fl[3] << 24) | fl[2]);
         }
     }
 
@@ -315,10 +326,10 @@ public class FabricPreloadScreen extends Screen {
         for (int i = 0; i < depth; i++) {
             float t = 1f - i / (float) depth;
             int   a = (int)(t * t * 155);
-            gfx.fill(i,       i,       W - i,   i + 1,   a << 24);
-            gfx.fill(i,       H-i-1,   W - i,   H - i,   a << 24);
-            gfx.fill(i,       i,       i + 1,   H - i,   a << 24);
-            gfx.fill(W-i-1,   i,       W - i,   H - i,   a << 24);
+            gfx.fill(i,     i,     W - i, i + 1, a << 24);
+            gfx.fill(i,     H-i-1, W - i, H - i, a << 24);
+            gfx.fill(i,     i,     i + 1, H - i, a << 24);
+            gfx.fill(W-i-1, i,     W - i, H - i, a << 24);
         }
     }
 
@@ -327,16 +338,12 @@ public class FabricPreloadScreen extends Screen {
     // =========================================================================
 
     private void drawPanel(GuiGraphics gfx, int x, int y, int w, int h, long now) {
-        // Drop shadow
         gfx.fill(x + 5, y + 6, x + w + 5, y + h + 6, 0x77000000);
-        // Body
         gfx.fill(x, y, x + w, y + h, 0xF00B0B18);
-        // Animated border
         float phase = (now / 1500f) % 1f;
         int bCol = lerpColor(0xFF3A2B6E, 0xFF9B72CF,
                 (float)Math.abs(Math.sin(phase * Math.PI)));
         drawBorderLine(gfx, x, y, w, h, bCol);
-        // Inner top sheen
         gfx.fill(x + 1, y + 1, x + w - 1, y + 2, 0x1AFFFFFF);
     }
 
@@ -344,16 +351,14 @@ public class FabricPreloadScreen extends Screen {
         gfx.fill(x - 1, y - 1, x + w + 1, y + h + 1, 0xFF2A2A44);
         gfx.fill(x, y, x + w, y + h, COL_BAR_BG);
 
-        int fillW = (int)(w * progress);
+        int fillW = (int)(w * displayProgress);
         if (fillW > 0) {
-            // Gradient fill
             for (int px = 0; px < fillW; px++) {
                 float t   = (float) px / Math.max(1, fillW);
                 int   col = lerpColor(0xFF6A44AA, COL_BAR_FILL, t);
                 gfx.fill(x + px, y, x + px + 1, y + h, 0xFF000000 | col);
             }
 
-            // Shimmer sweep
             float sw  = (now % 1500) / 1500f;
             int   shP = x + (int)(sw * fillW);
             int   shW = Math.min(44, fillW);
@@ -363,7 +368,6 @@ public class FabricPreloadScreen extends Screen {
                          ((int)(e * 55) << 24) | 0xFFFFFF);
             }
 
-            // Bright edge
             gfx.fill(x + fillW - 2, y, x + fillW, y + h, COL_BAR_SHINE);
         }
 
@@ -376,34 +380,34 @@ public class FabricPreloadScreen extends Screen {
     // =========================================================================
 
     private void drawFooter(GuiGraphics gfx, int W, int H, long now) {
-        int fh = 20;
-        int fy = H - fh;
-
-        // Footer strip
+        int fh = 20, fy = H - fh;
         gfx.fill(0, fy, W, H, 0xCC04040C);
-        // Top separator — animated colour
         float phase = (now / 2200f) % 1f;
         int lineCol = lerpColor(0xFF1E1050, 0xFF6B44AA,
                 (float)Math.abs(Math.sin(phase * Math.PI)));
         gfx.fill(0, fy, W, fy + 1, 0xFF000000 | lineCol);
+        gfx.fill(0,     fy, 2,     H, 0xFF6B44AA);
+        gfx.fill(W - 2, fy, W,     H, 0xFF6B44AA);
 
-        // Subtle left / right decorative ticks
-        gfx.fill(0,     fy, 2,     H,  0xFF6B44AA);
-        gfx.fill(W - 2, fy, W,     H,  0xFF6B44AA);
-
-        // Pulsing copyright text
-        float pulse  = 0.60f + 0.40f * (float)Math.sin(now / 1900f);
-        int   tAlpha = (int)(pulse * 195);
-        String copy  = "(C) 2024  biuvietnam  |  All rights reserved";
-        gfx.drawCenteredString(font, copy, W / 2, fy + 5, (tAlpha << 24) | 0x9988CC);
+        if (isFontReady()) {
+            float pulse  = 0.60f + 0.40f * (float)Math.sin(now / 1900f);
+            int   tAlpha = (int)(pulse * 195);
+            gfx.drawCenteredString(mc.font,
+                    "(C) 2024  biuvietnam  |  All rights reserved",
+                    W / 2, fy + 5, (tAlpha << 24) | 0x9988CC);
+        }
     }
 
     // =========================================================================
     // Utilities
     // =========================================================================
 
+    /** Returns true only when Minecraft's font renderer is initialised. */
+    private boolean isFontReady() {
+        return mc.font != null;
+    }
+
     private int worldBaseY(int H) {
-        // Ground sits at 95% screen height, leaving a small strip below
         return H - (int)(H * 0.04f);
     }
 
@@ -414,12 +418,8 @@ public class FabricPreloadScreen extends Screen {
         gfx.fill(x + w - 1, y,         x + w,     y + h,     col);
     }
 
-    private static float easeOutCubic(float t) {
-        return 1f - (float)Math.pow(1 - t, 3);
-    }
-
     private static int lerpColor(int a, int b, float t) {
-        t = Math.max(0f, Math.min(1f, t));
+        t = Mth.clamp(t, 0f, 1f);
         int ar = (a >> 16) & 0xFF, ag = (a >> 8) & 0xFF, ab = a & 0xFF;
         int br = (b >> 16) & 0xFF, bg = (b >> 8) & 0xFF, bb = b & 0xFF;
         return ((int)(ar + (br - ar) * t) << 16)
@@ -444,10 +444,12 @@ public class FabricPreloadScreen extends Screen {
     }
 
     private String getStatusText(float p) {
-        if (p < 0.20f) return "Initialising Fabric runtime\u2026";
-        if (p < 0.45f) return "Loading mixin transformers\u2026";
-        if (p < 0.70f) return "Scanning mod dependencies\u2026";
-        if (p < 0.90f) return "Preparing resource packs\u2026";
-        return "Almost ready\u2026";
+        if (p < 0.10f) return "Starting up\u2026";
+        if (p < 0.30f) return "Loading core assets\u2026";
+        if (p < 0.55f) return "Loading textures & models\u2026";
+        if (p < 0.75f) return "Stitching texture atlas\u2026";
+        if (p < 0.90f) return "Baking block models\u2026";
+        if (p < 0.99f) return "Finishing up\u2026";
+        return "Done!";
     }
 }

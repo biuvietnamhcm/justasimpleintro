@@ -33,7 +33,6 @@ import net.minecraft.resources.ResourceLocation;
 public class VideoScreen extends Screen {
 
     // ── Config ────────────────────────────────────────────────────────────────
-    private static final String VIDEO_FILENAME = "intro.mp4";
     private static final double FALLBACK_FPS   = 60.0;
     private static final int    BUFFER_FRAMES  = 8;
     private static final long   FADE_IN_MS     = 500;
@@ -453,6 +452,7 @@ public class VideoScreen extends Screen {
         gfx.drawCenteredString(font, "\u00a77Loading\u2026", cx, cy + 30, 0x77AA8855);
     }
 
+    // ── Skip hint ─────────────────────────────────────────────────────────────
     // ── Input ─────────────────────────────────────────────────────────────────
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {

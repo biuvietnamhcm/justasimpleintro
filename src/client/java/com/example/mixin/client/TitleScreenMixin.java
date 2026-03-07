@@ -5,28 +5,30 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-import com.example.intro.VideoScreen;
 import com.example.intro.FabricPreloadScreen;
+import com.example.intro.VideoScreen;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.TitleScreen;
 
 /**
- * Intercepts TitleScreen after it initialises.
+ * Intercepts TitleScreen after it initialises and redirects to
+ * FabricPreloadScreen, which then advances to VideoScreen once done.
  *
- * Every time Minecraft would show TitleScreen (first launch, returning
- * from a world, returning from multiplayer, etc.) we replace it with
- * VideoScreen instead.
+ * Flow:
+ *   TitleScreen.init()
+ *     └─► FabricPreloadScreen  (3.2 s animated loading bar)
+ *           └─► VideoScreen    (intro video + menu)
  *
- * VideoScreen's static state means the video keeps running from where
- * it left off on every return — no restart, no black flash.
+ * On return from a world / multiplayer, VideoScreen's static decode
+ * thread keeps running so the video resumes seamlessly — but the
+ * preload screen is NOT shown again on those returns because
+ * TitleScreenMixin only fires when Minecraft actually shows TitleScreen,
+ * and VideoScreen.navigate() uses a fresh TitleScreen as parent so
+ * mc.setScreen(parent) → TitleScreen.init() → this mixin fires again.
  *
- * FabricPreloadScreen / CustomTitleScreen are no longer needed here;
- * VideoScreen handles both the intro phase and the menu phase itself.
- *
- * IMPORTANT: Schedule the screen change on the next tick to avoid
- * NullPointerException from Fabric's ScreenEvents.afterRender() being
- * called while the screen is null during this render frame.
+ * If you do NOT want the preload shown again on every return, guard it
+ * with a static boolean (see FabricPreloadScreen.s_shown below).
  */
 @Mixin(TitleScreen.class)
 public class TitleScreenMixin {
