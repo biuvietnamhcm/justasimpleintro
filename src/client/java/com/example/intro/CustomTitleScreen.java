@@ -1,15 +1,15 @@
 package com.example.intro;
 
+import java.util.Random;
+
 import net.minecraft.SharedConstants;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.OptionsScreen;
+import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.multiplayer.JoinMultiplayerScreen;
 import net.minecraft.client.gui.screens.worldselection.SelectWorldScreen;
 import net.minecraft.network.chat.Component;
-
-import java.util.Random;
 
 /**
  * Fallback Title Screen — shown only when intro.mp4 is missing entirely.
@@ -86,10 +86,8 @@ public class CustomTitleScreen extends Screen {
         drawVignette(gfx);
 
         // Content
-        drawTitle(gfx, now, fadeIn, elapsed);
         detectHover(mouseX, mouseY, now);
         drawButtons(gfx, now, fadeIn);
-        drawFooter(gfx, fadeIn);
 
         // Global fade-in
         if (fadeIn < 1f)
@@ -281,14 +279,7 @@ public class CustomTitleScreen extends Screen {
         }
     }
 
-    private void drawFooter(GuiGraphics gfx, float fadeIn) {
-        int a  = (int)(fadeIn * 140);
-        int a2 = (int)(fadeIn * 80);
-        gfx.drawCenteredString(font, "Discover more at minecraft.net",
-                width / 2, height - 22, (a << 24) | 0xAA8855);
-        gfx.drawCenteredString(font, "\u00a78Copyright Mojang AB  \u2022  Do not distribute",
-                width / 2, height - 11, (a2 << 24) | 0x664433);
-    }
+
 
     // ── Input ─────────────────────────────────────────────────────────────────
     @Override
