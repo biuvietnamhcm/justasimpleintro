@@ -11,28 +11,22 @@ import net.minecraft.client.gui.screens.worldselection.SelectWorldScreen;
 import net.minecraft.network.chat.Component;
 
 /**
- * Fallback Title Screen — shown only when intro.mp4 is missing entirely.
+ * Fallback Title Screen — shown only when intro.mp4 is missing.
  *
- * Visual theme: dark cave / amber / lava — matching the Minecraft cave
- * screenshot aesthetic requested by the user.
+ * Buttons use the same block-storm construction as VideoScreen:
+ * 1000 blocks fly from outside the screen to build each button,
+ * then the label text fades in once the build completes.
  */
 public class CustomTitleScreen extends Screen {
 
-    // ── Layout ────────────────────────────────────────────────────────────────
-    private static final int BTN_W        = 240;
-    private static final int BTN_H        = 44;
-    private static final int BTN_GAP      = 10;
-
-    // ── Cave / amber colour palette ───────────────────────────────────────────
-    private static final int COL_BG         = 0xFF060402;
-    private static final int COL_BTN_BG     = 0xFF0A0704;
-    private static final int COL_BTN_HV     = 0xFF150E06;
-    private static final int COL_BTN_TEXT   = 0xFFD4B896;
-    private static final int COL_BTN_TEXTHV = 0xFFFFE8C8;
+    // ── Block storm config ─────────────────────────────────────────────────────
+    private static final int   BLOCK_PX           = 4;
+    private static final float BUILD_DURATION_SEC = 1.4f;
+    private static final long  BUILD_STAGGER_MS   = 120L;
+    private static final float TEXT_SHOW_AT       = 0.85f;
 
     // ── Particle embers ───────────────────────────────────────────────────────
     private static final int EMBER_COUNT = 80;
-    // [x%, y%, radius, speed, phase, brightness]
     private final float[][] embers = new float[EMBER_COUNT][6];
 
     // ── Button descriptors ────────────────────────────────────────────────────
@@ -44,15 +38,14 @@ public class CustomTitleScreen extends Screen {
     };
 
     // ── State ─────────────────────────────────────────────────────────────────
-    private long  startMs    = -1;
-    private int   hoveredBtn = -1;
+    private long startMs    = -1;
+    private int  hoveredBtn = -1;
     private final long[] pressedMs = new long[BUTTONS.length];
 
     // ── Constructor ───────────────────────────────────────────────────────────
     public CustomTitleScreen() {
         super(Component.literal("Title"));
         java.util.Arrays.fill(pressedMs, -1L);
-
         Random rng = new Random(99991);
         for (int i = 0; i < EMBER_COUNT; i++) {
             embers[i][0] = rng.nextFloat();
@@ -73,21 +66,26 @@ public class CustomTitleScreen extends Screen {
     // ── Render ────────────────────────────────────────────────────────────────
     @Override
     public void render(GuiGraphics gfx, int mouseX, int mouseY, float delta) {
-        long  now     = System.currentTimeMillis();
+        long  now    = System.currentTimeMillis();
         long  elapsed = (startMs < 0) ? 0 : now - startMs;
         float fadeIn  = Math.min(1f, elapsed / 700f);
 
-        // Background
-        gfx.fill(0, 0, width, height, COL_BG);
+        gfx.fill(0, 0, width, height, 0xFF060402);
         drawCaveGradient(gfx, now);
         drawEmbers(gfx, now);
         drawVignette(gfx);
 
-        // Content
-        detectHover(mouseX, mouseY, now);
+        hoveredBtn = -1;
+        for (int i = 0; i < BUTTONS.length; i++) {
+            int[] r = btnRect(i);
+            if (mouseX >= r[0] && mouseX <= r[0] + r[2]
+                    && mouseY >= r[1] && mouseY <= r[1] + r[3]
+                    && pressedMs[i] < 0)
+                hoveredBtn = i;
+        }
+
         drawButtons(gfx, now, fadeIn);
 
-        // Global fade-in
         if (fadeIn < 1f)
             gfx.fill(0, 0, width, height, (int)((1f - fadeIn) * 255) << 24);
 
@@ -95,145 +93,164 @@ public class CustomTitleScreen extends Screen {
     }
 
     // ── Background ────────────────────────────────────────────────────────────
-    /** Subtle warm gradient rising from the bottom, like lava glow. */
     private void drawCaveGradient(GuiGraphics gfx, long now) {
-        int H = height, W = width;
         int bands = height / 3;
         for (int dy = 0; dy < bands; dy++) {
             float t = 1f - (dy / (float)bands);
-            float pulse = 0.6f + 0.15f * (float)Math.abs(Math.sin(now / 3000.0));
-            int a = (int)(t * t * pulse * 38);
-            gfx.fill(0, H - dy - 1, W, H - dy, (a << 24) | 0xCC5500);
+            float p = 0.6f + 0.15f * (float)Math.abs(Math.sin(now / 3000.0));
+            gfx.fill(0, height - dy - 1, width, height - dy, ((int)(t * t * p * 38) << 24) | 0xCC5500);
         }
-        // Faint top-edge dark blue cave ceiling
         for (int dy = 0; dy < 80; dy++) {
             float t = 1f - dy / 80f;
-            int a = (int)(t * t * 22);
-            gfx.fill(0, dy, W, dy + 1, (a << 24) | 0x001133);
+            gfx.fill(0, dy, width, dy + 1, ((int)(t * t * 22) << 24) | 0x001133);
         }
     }
 
     private void drawEmbers(GuiGraphics gfx, long now) {
         float t = now / 1000f;
         for (float[] e : embers) {
-            // Embers drift upward
-            float yFrac = (e[1] - t * e[3] * 0.04f + 10f) % 1f;
-            float x     = e[0] * width;
-            float y     = yFrac * height;
-            float twink = 0.4f + 0.6f * (float)Math.abs(Math.sin(t * e[3] + e[4]));
-            float bright = e[5] * twink;
-            int   a     = Math.max(10, Math.min(200, (int)(bright * 200)));
-            int   r     = Math.max(1, (int)e[2]);
-            // Warm amber/orange ember colour
-            int   col   = lerpColor(0xDD5500, 0xFFAA22, bright);
-            gfx.fill((int)x - r, (int)y - r, (int)x + r, (int)y + r, (a << 24) | col);
+            float yFrac  = (e[1] - t * e[3] * 0.04f + 10f) % 1f;
+            float bright = e[5] * (0.4f + 0.6f * (float)Math.abs(Math.sin(t * e[3] + e[4])));
+            int   a      = Math.max(10, Math.min(200, (int)(bright * 200)));
+            int   r      = Math.max(1, (int)e[2]);
+            int   col    = lerpColor(0xDD5500, 0xFFAA22, bright);
+            gfx.fill((int)(e[0] * width) - r, (int)(yFrac * height) - r,
+                     (int)(e[0] * width) + r, (int)(yFrac * height) + r,
+                     (a << 24) | col);
         }
     }
 
     private void drawVignette(GuiGraphics gfx) {
         int depth = Math.min(width, height) / 3;
         for (int i = 0; i < depth; i++) {
-            float t = i / (float)depth;
-            int   a = (int)((1 - t) * (1 - t) * 180);
-            int   W = width, H = height;
-            gfx.fill(i,     i,     W-i,   i+1,   a << 24);
-            gfx.fill(i,     H-i-1, W-i,   H-i,   a << 24);
-            gfx.fill(i,     i,     i+1,   H-i,   a << 24);
-            gfx.fill(W-i-1, i,     W-i,   H-i,   a << 24);
+            int a = (int)((1 - i / (float)depth) * (1 - i / (float)depth) * 180);
+            gfx.fill(i,           i,           width - i,     i + 1,         a << 24);
+            gfx.fill(i,           height-i-1,  width - i,     height - i,    a << 24);
+            gfx.fill(i,           i,           i + 1,         height - i,    a << 24);
+            gfx.fill(width-i-1,   i,           width - i,     height - i,    a << 24);
         }
     }
 
-    // ── Buttons ───────────────────────────────────────────────────────────────
-    private void detectHover(int mx, int my, long now) {
-        hoveredBtn = -1;
-        for (int i = 0; i < BUTTONS.length; i++) {
-            int[] r = btnRect(i);
-            if (mx >= r[0] && mx <= r[0]+r[2] && my >= r[1] && my <= r[1]+r[3]
-                    && pressedMs[i] < 0)
-                hoveredBtn = i;
-        }
-    }
-
-    /** Compute button rect relative to current GUI-scaled screen size. */
+    // ── Button layout ─────────────────────────────────────────────────────────
     private int[] btnRect(int i) {
         int bw  = Math.min(260, Math.max(160, width  / 4));
         int bh  = Math.min(48,  Math.max(28,  height / 14));
         int gap = Math.max(6,   height / 60);
         int totalH = BUTTONS.length * (bh + gap) - gap;
-        int x = (width  - bw)     / 2;
-        int y = (height - totalH) / 2 + i * (bh + gap);
-        return new int[]{ x, y, bw, bh };
+        return new int[]{ (width - bw) / 2, (height - totalH) / 2 + i * (bh + gap), bw, bh };
     }
 
+    // ── Draw buttons ──────────────────────────────────────────────────────────
     private void drawButtons(GuiGraphics gfx, long now, float fadeIn) {
         for (int i = 0; i < BUTTONS.length; i++) {
-            int[]   r       = btnRect(i);
-            boolean hov     = (i == hoveredBtn);
-            boolean pressed = (pressedMs[i] >= 0);
+            int[] r  = btnRect(i);
+            int   bx = r[0], by = r[1], bw = r[2], bh = r[3];
+            boolean hov     = (i == hoveredBtn) && pressedMs[i] < 0;
+            boolean pressed = pressedMs[i] >= 0;
 
-            float bf = Math.min(1f, Math.max(0f,
-                    (float)(System.currentTimeMillis() - startMs - 200 - i * 60) / 350f));
-            bf = easeOut(bf) * fadeIn;
+            long  btnStart  = startMs + 200L + (long)(i * BUILD_STAGGER_MS);
+            float buildProg = Math.max(0f, Math.min(1f,
+                    (now - btnStart) / (BUILD_DURATION_SEC * 1000f)));
+            if (buildProg <= 0f) continue;
 
-            int bx = r[0], by = r[1], bw = r[2], bh = r[3];
-            if (pressed) by += (int)(Math.min(1f, (now - pressedMs[i]) / 100f) * 2);
+            int pressOff = pressed ? (int)(Math.min(1f, (now - pressedMs[i]) / 100f) * 2) : 0;
+            by += pressOff;
 
-            // Amber glow
-            float gs = hov ? 1f : (0.4f + 0.3f * (float)Math.abs(Math.sin(now / 1500.0 + i)));
-            for (int g = 6; g > 0; g--) {
-                int ga  = (int)(bf * gs * (hov ? 50 : 20) / g);
-                int col = (ga << 24) | (hov ? 0xDD8833 : 0x774411);
-                int pad = g * 5;
-                gfx.fill(bx - pad, by - pad/2, bx + bw + pad, by + bh + pad/2, col);
+            final float MERGE_START = 0.72f;
+            float mergeProg  = Math.max(0f, (buildProg - MERGE_START) / (1f - MERGE_START));
+            float blockAlpha = 1f - mergeProg;
+            float solidAlpha = mergeProg;
+
+            // 1. Flying blocks fade out during merge
+            if (blockAlpha > 0f)
+                drawBlockStorm(gfx, bx, by, bw, bh, buildProg, blockAlpha, i);
+
+            // 2. Solid button fades in during merge
+            if (solidAlpha > 0f) {
+                float f = solidAlpha * fadeIn;
+                gfx.fill(bx, by, bx + bw, by + bh,
+                        ((int)(f * (hov ? 0xCC : 0xAA)) << 24) | (hov ? 0x2A1400 : 0x100800));
+                gfx.fill(bx, by, bx + bw, by + 1,
+                        ((int)(f * (hov ? 40 : 20)) << 24) | 0xFFEECC);
+                drawBorder(gfx, bx, by, bw, bh,
+                        ((int)(f * (hov ? 240 : 180)) << 24) | (hov ? 0xFFCC55 : 0xCC7733));
+                gfx.fill(bx, by, bx + 3, by + bh,
+                        ((int)(f * 220) << 24) | (hov ? 0xFFDD88 : 0xAA6633));
             }
 
-            // Shadow + body
-            gfx.fill(bx + 3, by + 3, bx + bw + 3, by + bh + 3, (int)(bf * 0x55) << 24);
-            int bgA = (int)(bf * (hov ? 0xCC : 0xAA));
-            gfx.fill(bx, by, bx + bw, by + bh, (bgA << 24) | (hov ? COL_BTN_HV : COL_BTN_BG) & 0x00FFFFFF);
-
-            // Inner highlight
-            for (int dy = 0; dy < bh / 2; dy++) {
-                float edge = 1f - dy / (float)(bh / 2);
-                int   a    = (int)(edge * bf * (hov ? 20 : 10));
-                gfx.fill(bx, by + dy, bx + bw, by + dy + 1, (a << 24) | 0xFFEECC);
+            // 3. Label fades in after merge
+            float textFade = Math.max(0f, (buildProg - TEXT_SHOW_AT) / (1f - TEXT_SHOW_AT));
+            if (textFade > 0f) {
+                int tA = (int)(textFade * fadeIn * 240);
+                gfx.drawCenteredString(font, "\u00a7l  " + BUTTONS[i][0],
+                        bx + bw / 2, by + (bh - 8) / 2,
+                        (tA << 24) | (hov ? 0xFFFFEE : 0xE8D4B0));
             }
-
-            // Shimmer
-            if (!pressed) {
-                float sw = (now / 2000f + i * 0.4f) % 1f;
-                int   sx = bx + (int)(sw * (bw + 60)) - 30;
-                for (int si = 0; si < 28; si++) {
-                    float e2 = 1f - Math.abs(si / 14f - 1f);
-                    int   sa = (int)(e2 * bf * (hov ? 50 : 25));
-                    gfx.fill(sx + si, by, sx + si + 1, by + bh, (sa << 24) | 0xFFE8BB);
-                }
-            }
-
-            // Border
-            int bCol = hov
-                ? ((int)(bf * 255) << 24 | 0xDD9944)
-                : ((int)(bf * 180) << 24 | lerpColor(0x7A4A22, 0xAA6633,
-                    (float)Math.abs(Math.sin(now / 900.0 + i))));
-            drawBorder(gfx, bx, by, bw, bh, bCol);
-
-            // Corners + accent bar
-            int cc = hov ? 0xFFDD9944 : (int)(bf * 200) << 24 | 0x9A6030;
-            gfx.fill(bx,       by,       bx+3,   by+3,   cc);
-            gfx.fill(bx+bw-3,  by,       bx+bw,  by+3,   cc);
-            gfx.fill(bx,       by+bh-3,  bx+3,   by+bh,  cc);
-            gfx.fill(bx+bw-3,  by+bh-3,  bx+bw,  by+bh,  cc);
-            gfx.fill(bx, by, bx + 3, by + bh, hov ? 0xFFEEAA44 : (int)(bf*200) << 24 | 0x8B5020);
-
-            // Label
-            int   tA  = (int)(bf * 235);
-            int   tC  = (tA << 24) | ((hov ? COL_BTN_TEXTHV : COL_BTN_TEXT) & 0x00FFFFFF);
-            String lbl = hov ? "  " + BUTTONS[i][0] : BUTTONS[i][0];
-            gfx.drawCenteredString(font, "\u00a7l" + lbl, bx + bw / 2, by + (bh - 8) / 2, tC);
         }
     }
 
+    // ── Block storm ───────────────────────────────────────────────────────────
+    private void drawBlockStorm(GuiGraphics gfx,
+                                int bx, int by, int bw, int bh,
+                                float buildProg, float masterAlpha, int btnIdx) {
 
+        int cols  = Math.max(1, bw / BLOCK_PX);
+        int rows  = Math.max(1, bh / BLOCK_PX);
+        int total = cols * rows;
+
+        for (int b = 0; b < total; b++) {
+            long  seed = (long)(btnIdx * 99991 + b);
+            float r0   = hash(seed);
+            float r1   = hash(seed + 1);
+            float r2   = hash(seed + 2);
+            float r3   = hash(seed + 3);
+            float r4   = hash(seed + 4);
+
+            float delay  = r0 * 0.65f;
+            float dur    = 0.20f + r1 * 0.15f;
+            float blockT = Math.max(0f, Math.min(1f, (buildProg - delay) / dur));
+            if (blockT <= 0f) continue;
+
+            // Exact grid-cell destination
+            int   gridX = b % cols;
+            int   gridY = b / cols;
+            float endX  = bx + gridX * BLOCK_PX + BLOCK_PX * 0.5f;
+            float endY  = by + gridY * BLOCK_PX + BLOCK_PX * 0.5f;
+
+            // Origin: random off-screen
+            float ox, oy;
+            switch ((int)(r2 * 4)) {
+                case 0:  ox = r3 * width;          oy = -height * (0.2f + r4 * 0.8f); break;
+                case 1:  ox = r3 * width;          oy =  height * (1.2f + r4 * 0.8f); break;
+                case 2:  ox = -width  * (0.2f+r3); oy =  r4 * height;                 break;
+                default: ox =  width  * (1.2f+r3); oy =  r4 * height;                 break;
+            }
+
+            // Bezier arc
+            float midX  = (ox + endX) * 0.5f;
+            float midY  = (oy + endY) * 0.5f;
+            float ctrlX = midX + (r1 - 0.5f) * 140f;
+            float ctrlY = midY + (r0 - 0.6f) * 100f;
+
+            float t  = 1f - (float)Math.pow(1f - blockT, 2.6f);
+            float mt = 1f - t;
+            float curX = mt*mt*ox + 2*mt*t*ctrlX + t*t*endX;
+            float curY = mt*mt*oy + 2*mt*t*ctrlY + t*t*endY;
+
+            int sz = (int)(BLOCK_PX * 0.5f * Math.min(1f, blockT * 4f));
+            if (sz < 1) sz = 1;
+
+            int col;
+            if      (blockT < 0.35f) col = lerpColor(0x3A3A3A, 0x6B2E0E, blockT / 0.35f);
+            else if (blockT < 0.75f) col = lerpColor(0x6B2E0E, 0xBB5511, (blockT-0.35f)/0.40f);
+            else                     col = lerpColor(0xBB5511, 0xFF9922, (blockT-0.75f)/0.25f);
+
+            int alpha = (int)(Math.min(1f, blockT * 3f) * masterAlpha * 210f);
+            gfx.fill((int)(curX - sz), (int)(curY - sz),
+                     (int)(curX + sz), (int)(curY + sz),
+                     (alpha << 24) | col);
+        }
+    }
 
     // ── Input ─────────────────────────────────────────────────────────────────
     @Override
@@ -241,10 +258,9 @@ public class CustomTitleScreen extends Screen {
         if (btn != 0) return super.mouseClicked(mx, my, btn);
         for (int i = 0; i < BUTTONS.length; i++) {
             int[] r = btnRect(i);
-            if (mx >= r[0] && mx <= r[0]+r[2] && my >= r[1] && my <= r[1]+r[3]
+            if (mx >= r[0] && mx <= r[0] + r[2] && my >= r[1] && my <= r[1] + r[3]
                     && pressedMs[i] < 0) {
-                pressedMs[i] = System.currentTimeMillis();
-                return true;
+                pressedMs[i] = System.currentTimeMillis(); return true;
             }
         }
         return super.mouseClicked(mx, my, btn);
@@ -253,9 +269,7 @@ public class CustomTitleScreen extends Screen {
     private void checkPressedActions(long now) {
         for (int i = 0; i < BUTTONS.length; i++) {
             if (pressedMs[i] >= 0 && now - pressedMs[i] >= 120) {
-                String id = BUTTONS[i][1];
-                pressedMs[i] = -1;
-                navigate(id);
+                String id = BUTTONS[i][1]; pressedMs[i] = -1; navigate(id);
             }
         }
     }
@@ -272,22 +286,27 @@ public class CustomTitleScreen extends Screen {
 
     // ── Utilities ─────────────────────────────────────────────────────────────
     private static void drawBorder(GuiGraphics gfx, int x, int y, int w, int h, int col) {
-        gfx.fill(x,     y,     x+w,   y+1,   col);
-        gfx.fill(x,     y+h-1, x+w,   y+h,   col);
-        gfx.fill(x,     y,     x+1,   y+h,   col);
-        gfx.fill(x+w-1, y,     x+w,   y+h,   col);
+        gfx.fill(x,       y,       x + w,   y + 1,   col);
+        gfx.fill(x,       y + h-1, x + w,   y + h,   col);
+        gfx.fill(x,       y,       x + 1,   y + h,   col);
+        gfx.fill(x + w-1, y,       x + w,   y + h,   col);
     }
 
     private static int lerpColor(int a, int b, float t) {
-        int ar=(a>>16)&0xFF, ag=(a>>8)&0xFF, ab=a&0xFF;
-        int br=(b>>16)&0xFF, bg=(b>>8)&0xFF, bb=b&0xFF;
-        return 0xFF000000
-             | ((int)(ar+(br-ar)*t) << 16)
-             | ((int)(ag+(bg-ag)*t) <<  8)
-             |  (int)(ab+(bb-ab)*t);
+        t = Math.max(0f, Math.min(1f, t));
+        int ar = (a >> 16) & 0xFF, ag = (a >> 8) & 0xFF, ab = a & 0xFF;
+        int br = (b >> 16) & 0xFF, bg = (b >> 8) & 0xFF, bb = b & 0xFF;
+        return ((int)(ar + (br - ar) * t) << 16)
+             | ((int)(ag + (bg - ag) * t) <<  8)
+             |  (int)(ab + (bb - ab) * t);
     }
 
-    private static float easeOut(float t) {
-        return 1f - (float)Math.pow(1 - t, 3);
+    private static float hash(long seed) {
+        long x = seed ^ (seed >>> 33);
+        x *= 0xff51afd7ed558ccdL;
+        x ^= (x >>> 33);
+        x *= 0xc4ceb9fe1a85ec53L;
+        x ^= (x >>> 33);
+        return (x & 0x7FFFFFFFFFFFFFFFL) / (float)0x7FFFFFFFFFFFFFFFL;
     }
 }
