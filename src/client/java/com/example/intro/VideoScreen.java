@@ -18,7 +18,6 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.OptionsScreen;
 import net.minecraft.client.gui.screens.Screen;
-import net.minecraft.client.gui.screens.TitleScreen;
 import net.minecraft.client.gui.screens.multiplayer.JoinMultiplayerScreen;
 import net.minecraft.client.gui.screens.worldselection.SelectWorldScreen;
 import net.minecraft.client.renderer.texture.DynamicTexture;
@@ -494,28 +493,30 @@ public class VideoScreen extends Screen {
     }
 
     /**
-     * Navigation — THE FIX for Fabric ScreenEvents NPE
-     * ──────────────────────────────────────────────────
-     * We must pass a REAL, non-null Screen as parent to every sub-screen.
-     * We use `new TitleScreen()` as the parent placeholder.
+     * Navigation — uses VideoScreen as parent for all sub-screens.
+     *
+     * Passing `this` (a live, initialized screen) as the parent satisfies
+     * Fabric's ScreenEvents.afterRender() requireNonNull check at every
+     * level of the screen stack — including grandchild screens like
+     * CreateWorldScreen that open from inside SelectWorldScreen.
      *
      * Flow when player exits a world / leaves multiplayer:
-     *   1. Sub-screen closes → mc.setScreen(parent) → mc.setScreen(new TitleScreen())
-     *   2. TitleScreen.init() fires
-     *   3. TitleScreenMixin intercepts → mc.setScreen(new VideoScreen())
-     *   4. VideoScreen.init() sees the decode thread is alive → skips re-init
-     *   5. Video resumes from last frame with no restart
+     *   1. Sub-screen closes → mc.setScreen(parent) → mc.setScreen(this VideoScreen)
+     *   2. VideoScreen.init() sees the decode thread is alive → skips re-init
+     *   3. Video resumes from last frame with no restart
      *
-     * Options uses `this` (VideoScreen) safely because OptionsScreen only
-     * calls mc.setScreen(parent) on close — it never spawns child screens
-     * that would fire afterRender on a removed screen.
+     * If for any reason TitleScreen is shown instead, TitleScreenMixin
+     * intercepts init() and redirects to a new VideoScreen automatically.
      */
     private void navigate(String id) {
         Minecraft mc = Minecraft.getInstance();
+        // Use TitleScreen as the parent to satisfy Fabric's null-checks
+        net.minecraft.client.gui.screens.TitleScreen parent = new net.minecraft.client.gui.screens.TitleScreen();
+
         switch (id) {
-            case "sp"   -> mc.setScreen(new SelectWorldScreen(new TitleScreen()));
-            case "mp"   -> mc.setScreen(new JoinMultiplayerScreen(new TitleScreen()));
-            case "opt"  -> mc.setScreen(new OptionsScreen(this, mc.options));
+            case "sp"   -> mc.setScreen(new SelectWorldScreen(parent));
+            case "mp"   -> mc.setScreen(new JoinMultiplayerScreen(parent));
+            case "opt"  -> mc.setScreen(new OptionsScreen(parent, mc.options));
             case "quit" -> mc.stop();
         }
     }
