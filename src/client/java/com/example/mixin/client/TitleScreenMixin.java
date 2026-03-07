@@ -6,6 +6,7 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 import com.example.intro.VideoScreen;
+import com.example.intro.FabricPreloadScreen;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.TitleScreen;
@@ -32,8 +33,16 @@ public class TitleScreenMixin {
 
     @Inject(method = "init", at = @At("TAIL"))
     private void onInit(CallbackInfo ci) {
-        // Schedule screen change for next tick to avoid NPE in ScreenEvents
         Minecraft mc = Minecraft.getInstance();
-        mc.tell(() -> mc.setScreen(new VideoScreen()));
+        // Schedule on next tick to avoid NPE from Fabric's ScreenEvents.afterRender()
+        mc.tell(() -> {
+            if (!FabricPreloadScreen.s_shown) {
+                // First launch: show the preload screen
+                mc.setScreen(new FabricPreloadScreen());
+            } else {
+                // Returning from a world / multiplayer: go straight to video
+                mc.setScreen(new VideoScreen());
+            }
+        });
     }
 }

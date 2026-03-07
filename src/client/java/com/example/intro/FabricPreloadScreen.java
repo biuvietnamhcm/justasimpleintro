@@ -1,222 +1,453 @@
 package com.example.intro;
 
-import com.mojang.blaze3d.systems.RenderSystem;
-import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.ResourceLocation;
 
 /**
  * Phase 1 — Fabric Preload Screen
  *
- * Shows the Fabric logo with an animated shimmer loading bar and floating
- * particle dots. Automatically advances to VideoScreen after the bar fills.
+ * Animated background layers (back to front):
+ *   1. Dark night-sky gradient
+ *   2. Twinkling stars
+ *   3. Torch soft light blooms
+ *   4. Scrolling Minecraft block-world terrain (infinite scroll left)
+ *   5. Torch flame sprites on top of blocks
+ *   6. Falling dust / ember particles
+ *   7. Subtle CRT scan-lines
+ *   8. Edge vignette
+ *
+ * Centre panel: Fabric logo + animated shimmer loading bar.
+ * Footer: © biuvietnam copyright strip.
  */
 public class FabricPreloadScreen extends Screen {
 
-    // ── Tuneable constants ───────────────────────────────────────────────────
-    /** Total duration of the preload phase in milliseconds. */
+    // ── Shown-once guard ──────────────────────────────────────────────────────
+    public static boolean s_shown = false;
+
+    // ── Timing ────────────────────────────────────────────────────────────────
     private static final long PRELOAD_DURATION_MS = 3_200;
 
-    /** How many decorative dots float in the background. */
-    private static final int DOT_COUNT = 60;
+    // ── Block world ───────────────────────────────────────────────────────────
+    private static final int WORLD_COLS   = 72;
+    private static final int WORLD_HEIGHT = 10;
+    private static final int BLOCK_PX     = 12;
 
-    // ── Fabric brand colours ─────────────────────────────────────────────────
-    private static final int COL_BG          = 0xFF0D0D0D;
-    private static final int COL_FABRIC_DARK = 0xFF1A1A2E;
-    private static final int COL_ACCENT      = 0xFFDBB5FF; // soft lavender
-    private static final int COL_ACCENT2     = 0xFF9B72CF; // Fabric purple
-    private static final int COL_BAR_BG      = 0xFF222233;
-    private static final int COL_BAR_FILL    = 0xFF9B72CF;
-    private static final int COL_BAR_SHINE   = 0xFFDDB9FF;
-    private static final int COL_TEXT        = 0xFFEEEEEE;
-    private static final int COL_TEXT_DIM    = 0xFF888899;
+    private static final int[] BLOCK_PALETTE = {
+        0xFF4A3020, // 0 dirt
+        0xFF555555, // 1 stone
+        0xFF3A7A1A, // 2 grass top
+        0xFF4A8820, // 3 grass bright
+        0xFF1A1A2E, // 4 bedrock / deep
+        0xFF6A4A22, // 5 sand
+        0xFF334422, // 6 mossy stone
+    };
 
-    // ── State ────────────────────────────────────────────────────────────────
-    private long  startTime   = -1;
-    private float progress    = 0f; // 0 → 1
+    private final int[]   terrain   = new int[WORLD_COLS];
+    private final int[][] blockType = new int[WORLD_COLS][WORLD_HEIGHT];
+
+    // ── Torches ───────────────────────────────────────────────────────────────
+    private static final int TORCH_COUNT = 7;
+    // [xFrac, relativeHeightFrac, phase, flickerSpeed]
+    private final float[][] torches = new float[TORCH_COUNT][4];
+
+    // ── Particles ─────────────────────────────────────────────────────────────
+    private static final int PARTICLE_COUNT = 130;
+    // [xFrac, yFrac, speed, size, alphaScale, type(0=dust,1=ember)]
+    private final float[][] particles = new float[PARTICLE_COUNT][6];
+
+    // ── Colours ───────────────────────────────────────────────────────────────
+    private static final int COL_SKY_TOP   = 0xFF050810;
+    private static final int COL_SKY_MID   = 0xFF0A1020;
+    private static final int COL_SKY_BOT   = 0xFF111830;
+    private static final int COL_BAR_BG    = 0xFF1A1A2E;
+    private static final int COL_BAR_FILL  = 0xFF9B72CF;
+    private static final int COL_BAR_SHINE = 0xFFDDB9FF;
+    private static final int COL_TEXT      = 0xFFEEEEEE;
+    private static final int COL_TEXT_DIM  = 0xFF888899;
+
+    // ── State ─────────────────────────────────────────────────────────────────
+    private long    startTime = -1;
+    private float   progress  = 0f;
     private boolean advanced  = false;
 
-    /** Pseudo-random dot positions (x%, y%, size, speed, phase). */
-    private final float[][] dots = new float[DOT_COUNT][5];
-
-    // ── Constructor ──────────────────────────────────────────────────────────
+    // ── Constructor ───────────────────────────────────────────────────────────
     public FabricPreloadScreen() {
-        super(Component.literal("Loading…"));
-        java.util.Random rng = new java.util.Random(42);
-        for (int i = 0; i < DOT_COUNT; i++) {
-            dots[i][0] = rng.nextFloat();          // x %
-            dots[i][1] = rng.nextFloat();          // y %
-            dots[i][2] = 1 + rng.nextFloat() * 3; // radius px
-            dots[i][3] = 0.3f + rng.nextFloat();  // drift speed
-            dots[i][4] = rng.nextFloat() * 6.28f; // phase offset
+        super(Component.literal("Loading\u2026"));
+        java.util.Random rng = new java.util.Random(20240101L);
+
+        // Terrain generation — random walk
+        int h = WORLD_HEIGHT / 2;
+        for (int c = 0; c < WORLD_COLS; c++) {
+            h = Math.max(2, Math.min(WORLD_HEIGHT - 1, h + (int)(rng.nextFloat() * 3) - 1));
+            terrain[c] = h;
+            for (int row = 0; row < h; row++) {
+                if      (row == h - 1)          blockType[c][row] = 2; // grass top
+                else if (row >= h - 3)          blockType[c][row] = 0; // dirt
+                else if (rng.nextFloat() < 0.07f) blockType[c][row] = 4; // ore vein / bedrock
+                else                            blockType[c][row] = 1; // stone
+            }
+        }
+
+        // Torches
+        for (int i = 0; i < TORCH_COUNT; i++) {
+            torches[i][0] = rng.nextFloat();
+            torches[i][1] = 0.4f + rng.nextFloat() * 0.2f;
+            torches[i][2] = rng.nextFloat() * 6.28f;
+            torches[i][3] = 1.4f + rng.nextFloat() * 2.2f;
+        }
+
+        // Particles
+        for (int i = 0; i < PARTICLE_COUNT; i++) {
+            particles[i][0] = rng.nextFloat();
+            particles[i][1] = rng.nextFloat();
+            particles[i][2] = 0.018f + rng.nextFloat() * 0.055f;
+            particles[i][3] = rng.nextFloat() < 0.3f ? 2 : 1;
+            particles[i][4] = 0.25f + rng.nextFloat() * 0.75f;
+            particles[i][5] = rng.nextFloat() < 0.22f ? 1 : 0;
         }
     }
 
-    // ── Lifecycle ────────────────────────────────────────────────────────────
+    // ── Lifecycle ─────────────────────────────────────────────────────────────
     @Override
     protected void init() {
+        s_shown   = true;
         startTime = System.currentTimeMillis();
     }
 
     @Override
     public boolean shouldCloseOnEsc() { return false; }
 
-    // ── Render ───────────────────────────────────────────────────────────────
+    // ── Render ────────────────────────────────────────────────────────────────
     @Override
     public void render(GuiGraphics gfx, int mouseX, int mouseY, float delta) {
-        long now      = System.currentTimeMillis();
-        long elapsed  = (startTime < 0) ? 0 : now - startTime;
+        long  now     = System.currentTimeMillis();
+        long  elapsed = (startTime < 0) ? 0 : now - startTime;
         float rawProg = Math.min(1f, (float) elapsed / PRELOAD_DURATION_MS);
-        // ease-out cubic for a satisfying deceleration
-        progress = easeOutCubic(rawProg);
+        progress      = easeOutCubic(rawProg);
 
-        int W = width;
-        int H = height;
+        int W = width, H = height;
+        float sec = now / 1000f;
 
-        // ── Background ───────────────────────────────────────────────────
-        gfx.fill(0, 0, W, H, COL_BG);
-        drawGradientOverlay(gfx, W, H, now);
-        drawDots(gfx, W, H, now);
+        drawSkyGradient(gfx, W, H);
+        drawStars(gfx, W, H, sec);
+        drawTorchBlooms(gfx, W, H, sec);
+        drawBlockWorld(gfx, W, H, sec);
+        drawTorchFlames(gfx, W, H, sec);
+        drawParticles(gfx, W, H, sec);
+        drawScanLines(gfx, W, H);
+        drawVignette(gfx, W, H);
 
-        // ── Centre panel ─────────────────────────────────────────────────
-        int panelW  = Math.min(420, W - 40);
-        int panelH  = 220;
-        int panelX  = (W - panelW) / 2;
-        int panelY  = (H - panelH) / 2;
+        // ── Centre panel ─────────────────────────────────────────────────────
+        int panelW = Math.min(400, W - 60);
+        int panelH = 200;
+        int panelX = (W - panelW) / 2;
+        int panelY = (H - panelH) / 2 - 8;
         drawPanel(gfx, panelX, panelY, panelW, panelH, now);
 
-        // ── Fabric logo text ──────────────────────────────────────────────
-        String logoLine1 = "fabric";
-        String logoLine2 = "mod loader";
-        int lx = W / 2;
-        int ly = panelY + 30;
-        gfx.drawCenteredString(font, "§d§l" + logoLine1.toUpperCase(), lx, ly,      0xFFDDBBFF);
-        gfx.drawCenteredString(font, "§7"   + logoLine2.toUpperCase(), lx, ly + 20, 0xFF9988BB);
+        // Logo
+        int lx = W / 2, ly = panelY + 26;
+        gfx.drawCenteredString(font, "\u00a7d\u00a7lFABRIC",  lx, ly,      0xFFDDBBFF);
+        gfx.drawCenteredString(font, "\u00a77MOD LOADER",      lx, ly + 18, 0xFF9988BB);
 
-        // ── Loading bar ───────────────────────────────────────────────────
-        int barW   = panelW - 60;
-        int barH   = 8;
-        int barX   = panelX + 30;
-        int barY   = panelY + panelH - 60;
+        // Thin separator
+        gfx.fill(panelX + 20, ly + 34, panelX + panelW - 20, ly + 35, 0x449B72CF);
+
+        // Loading bar
+        int barW = panelW - 60, barH = 8;
+        int barX = panelX + 30, barY = panelY + panelH - 56;
         drawLoadingBar(gfx, barX, barY, barW, barH, now);
 
-        // ── Status text ───────────────────────────────────────────────────
-        String status = getStatusText(rawProg);
-        gfx.drawCenteredString(font, "§7" + status, W / 2, barY + 18, COL_TEXT_DIM);
+        // Status + percentage
+        gfx.drawCenteredString(font, "\u00a77" + getStatusText(rawProg), W / 2, barY + 16, COL_TEXT_DIM);
+        gfx.drawCenteredString(font, "\u00a7f" + (int)(progress * 100) + "%", W / 2, barY - 13, COL_TEXT);
 
-        // ── Percentage ────────────────────────────────────────────────────
-        String pct = (int)(progress * 100) + "%";
-        gfx.drawCenteredString(font, "§f" + pct, W / 2, barY - 14, COL_TEXT);
+        // ── Footer ───────────────────────────────────────────────────────────
+        drawFooter(gfx, W, H, now);
 
-        // ── Advance when done ─────────────────────────────────────────────
+        // ── Advance ──────────────────────────────────────────────────────────
         if (rawProg >= 1f && !advanced) {
             advanced = true;
             ScreenUtil.setScreen(new VideoScreen());
         }
     }
 
-    // ── Drawing helpers ──────────────────────────────────────────────────────
+    // =========================================================================
+    // Background layers
+    // =========================================================================
 
-    /** Subtle radial gradient overlay for depth. */
-    private void drawGradientOverlay(GuiGraphics gfx, int W, int H, long now) {
-        int cx = W / 2, cy = H / 2;
-        int r  = Math.max(W, H) / 2;
-        // cheap approximation: concentric rectangles with decreasing alpha
-        for (int i = 0; i < 8; i++) {
-            float t   = i / 8f;
-            int   a   = (int)(40 * (1 - t));
-            int   col = (a << 24) | 0x6040A0;
-            int   off = (int)(t * r * 0.6f);
-            gfx.fill(cx - off, cy - off, cx + off, cy + off, col);
+    private void drawSkyGradient(GuiGraphics gfx, int W, int H) {
+        int bands = 40;
+        for (int i = 0; i < bands; i++) {
+            float t  = i / (float) bands;
+            int   y0 = (int)(t * H), y1 = (int)((i + 1f) / bands * H);
+            int   c  = (t < 0.5f)
+                     ? lerpColor(COL_SKY_TOP, COL_SKY_MID, t * 2f)
+                     : lerpColor(COL_SKY_MID, COL_SKY_BOT, (t - 0.5f) * 2f);
+            gfx.fill(0, y0, W, y1, 0xFF000000 | c);
         }
     }
 
-    /** Floating decorative dots. */
-    private void drawDots(GuiGraphics gfx, int W, int H, long now) {
-        float t = now / 1000f;
-        for (float[] d : dots) {
-            float x   = d[0] * W;
-            float y   = (float)(d[1] * H + Math.sin(t * d[3] + d[4]) * 8);
-            float rad = d[2];
-            float alpha = 0.08f + 0.06f * (float)Math.sin(t * d[3] * 0.7 + d[4]);
-            int   a   = Math.max(0, Math.min(255, (int)(alpha * 255)));
-            int   col = (a << 24) | 0xAA88FF;
-            int   ix  = (int) x;
-            int   iy  = (int) y;
-            int   ir  = Math.max(1, (int) rad);
-            gfx.fill(ix - ir, iy - ir, ix + ir, iy + ir, col);
+    private void drawStars(GuiGraphics gfx, int W, int H, float sec) {
+        int count = 180;
+        for (int i = 0; i < count; i++) {
+            float rx = hash(i * 3L);
+            float ry = hash(i * 3L + 1) * 0.58f;
+            float rp = hash(i * 3L + 2);
+            float tw = 0.3f + 0.7f * (float)Math.pow(
+                    Math.max(0f, (float)Math.sin(sec * (0.7f + rp * 1.6f) + rp * 6.28f)), 2);
+            int a = (int)(tw * (rp < 0.08f ? 230 : 130));
+            int sz = rp < 0.04f ? 2 : 1;
+            int x = (int)(rx * W), y = (int)(ry * H);
+            gfx.fill(x, y, x + sz, y + sz, (a << 24) | 0xCCBBFF);
         }
     }
 
-    /** Rounded-ish panel behind everything. */
+    private void drawTorchBlooms(GuiGraphics gfx, int W, int H, float sec) {
+        int baseY = worldBaseY(H);
+        for (float[] t : torches) {
+            float f1 = 0.5f + 0.5f * (float)Math.sin(sec * t[3] + t[2]);
+            float f2 = 0.55f + 0.45f * (float)Math.sin(sec * t[3] * 1.8f + t[2] + 1.3f);
+            int   tx = (int)(t[0] * W);
+            int   ty = baseY - (int)(t[1] * BLOCK_PX * WORLD_HEIGHT);
+
+            // Concentric glow rings, orange → yellow
+            int[][] rings = {
+                {120, 0xFF4400, (int)(f1 * 16)},
+                { 70, 0xFF7700, (int)(f1 * 26)},
+                { 35, 0xFFBB11, (int)(f2 * 52)},
+                { 14, 0xFFEE44, (int)(f1 * 80)},
+            };
+            for (int[] ring : rings) {
+                int rad = ring[0], col = ring[1], alpha = ring[2];
+                for (int r = rad; r > 0; r -= 5) {
+                    float fo = (float) r / rad;
+                    int a = (int)(alpha * (1f - fo) * 0.65f);
+                    if (a < 1) continue;
+                    int rh = (int)(r * 0.52f);
+                    gfx.fill(tx - r, ty - rh, tx + r, ty + rh, (a << 24) | col);
+                }
+            }
+        }
+    }
+
+    private void drawBlockWorld(GuiGraphics gfx, int W, int H, float sec) {
+        int baseY    = worldBaseY(H);
+        float scroll = (sec * 20f) % (BLOCK_PX * WORLD_COLS);
+
+        for (int c = 0; c < WORLD_COLS + 2; c++) {
+            int sx = (int)(c * BLOCK_PX - scroll);
+            if (sx + BLOCK_PX < 0 || sx > W) continue;
+
+            int col = ((c % WORLD_COLS) + WORLD_COLS) % WORLD_COLS;
+            int h   = terrain[col];
+
+            for (int row = 0; row < h; row++) {
+                int by  = baseY - (row + 1) * BLOCK_PX;
+                int bt  = blockType[col][row];
+                int bc  = BLOCK_PALETTE[Math.min(bt, BLOCK_PALETTE.length - 1)];
+                int fc  = (row == h - 1) ? lighten(bc, 0.28f) : bc;
+
+                gfx.fill(sx, by, sx + BLOCK_PX, by + BLOCK_PX, 0xFF000000 | fc);
+
+                // Right shadow
+                gfx.fill(sx + BLOCK_PX - 2, by, sx + BLOCK_PX, by + BLOCK_PX, 0x2A000000);
+                // Bottom shadow
+                gfx.fill(sx, by + BLOCK_PX - 2, sx + BLOCK_PX, by + BLOCK_PX, 0x1A000000);
+                // Top highlight line
+                gfx.fill(sx, by, sx + BLOCK_PX, by + 1, 0x15FFFFFF);
+                // Left highlight line
+                gfx.fill(sx, by, sx + 1, by + BLOCK_PX, 0x15FFFFFF);
+            }
+
+            // Ground fill
+            if (baseY < H)
+                gfx.fill(sx, baseY, sx + BLOCK_PX, H, 0xFF130C00);
+        }
+    }
+
+    private void drawTorchFlames(GuiGraphics gfx, int W, int H, float sec) {
+        int baseY = worldBaseY(H);
+        for (float[] t : torches) {
+            float f1 = 0.55f + 0.45f * (float)Math.sin(sec * t[3] + t[2]);
+            float f2 = 0.5f  + 0.5f  * (float)Math.sin(sec * t[3] * 2.5f + t[2] + 2.2f);
+            int tx = (int)(t[0] * W);
+            int ty = baseY - (int)(t[1] * BLOCK_PX * WORLD_HEIGHT);
+
+            // Torch stick
+            gfx.fill(tx - 1, ty - 7, tx + 2, ty, 0xDD7A4A22);
+
+            // Flame layers
+            int[][] flames = {
+                {4, 9,  0xFF5500, (int)(f1 * 190)},
+                {3, 6,  0xFF8800, (int)(f2 * 220)},
+                {1, 3,  0xFFDD11, (int)(f1 * 255)},
+            };
+            for (int[] fl : flames) {
+                gfx.fill(tx - fl[0], ty - 7 - fl[1],
+                         tx + fl[0] + 1, ty - 7,
+                         (fl[3] << 24) | fl[2]);
+            }
+        }
+    }
+
+    private void drawParticles(GuiGraphics gfx, int W, int H, float sec) {
+        for (int i = 0; i < PARTICLE_COUNT; i++) {
+            float[] p = particles[i];
+            p[1] = (p[1] + p[2] * 0.016f) % 1f;
+            float x  = p[0] * W + (float)Math.sin(sec * 0.35f + i * 0.9f) * 4f;
+            float y  = p[1] * H;
+            float tw = 0.5f + 0.5f * (float)Math.sin(sec * 1.2f + i * 0.65f);
+            int   a  = (int)(p[4] * tw * (p[5] == 1f ? 175 : 100));
+            int   col= (p[5] == 1f) ? lerpColor(0xFF6600, 0xFFCC22, tw) : 0xBBBBBB;
+            int   sz = (int) p[3];
+            gfx.fill((int)x - sz, (int)y - sz, (int)x + sz, (int)y + sz, (a << 24) | col);
+        }
+    }
+
+    private void drawScanLines(GuiGraphics gfx, int W, int H) {
+        for (int y = 0; y < H; y += 2)
+            gfx.fill(0, y, W, y + 1, 0x09000000);
+    }
+
+    private void drawVignette(GuiGraphics gfx, int W, int H) {
+        int depth = Math.min(W, H) / 3;
+        for (int i = 0; i < depth; i++) {
+            float t = 1f - i / (float) depth;
+            int   a = (int)(t * t * 155);
+            gfx.fill(i,       i,       W - i,   i + 1,   a << 24);
+            gfx.fill(i,       H-i-1,   W - i,   H - i,   a << 24);
+            gfx.fill(i,       i,       i + 1,   H - i,   a << 24);
+            gfx.fill(W-i-1,   i,       W - i,   H - i,   a << 24);
+        }
+    }
+
+    // =========================================================================
+    // Panel + bar
+    // =========================================================================
+
     private void drawPanel(GuiGraphics gfx, int x, int y, int w, int h, long now) {
-        // shadow
-        gfx.fill(x + 4, y + 4, x + w + 4, y + h + 4, 0x55000000);
-        // body
-        gfx.fill(x, y, x + w, y + h, 0xEE111122);
-        // border shimmer
-        float phase = (now / 1200f) % 1f;
-        int   bCol  = lerpColor(0xFF3A2B6E, 0xFF9B72CF, (float) Math.abs(Math.sin(phase * Math.PI)));
-        drawBorder(gfx, x, y, w, h, bCol);
+        // Drop shadow
+        gfx.fill(x + 5, y + 6, x + w + 5, y + h + 6, 0x77000000);
+        // Body
+        gfx.fill(x, y, x + w, y + h, 0xF00B0B18);
+        // Animated border
+        float phase = (now / 1500f) % 1f;
+        int bCol = lerpColor(0xFF3A2B6E, 0xFF9B72CF,
+                (float)Math.abs(Math.sin(phase * Math.PI)));
+        drawBorderLine(gfx, x, y, w, h, bCol);
+        // Inner top sheen
+        gfx.fill(x + 1, y + 1, x + w - 1, y + 2, 0x1AFFFFFF);
     }
 
-    /** Animated loading bar with shimmer. */
     private void drawLoadingBar(GuiGraphics gfx, int x, int y, int w, int h, long now) {
-        // background track
-        gfx.fill(x - 1, y - 1, x + w + 1, y + h + 1, 0xFF333355);
+        gfx.fill(x - 1, y - 1, x + w + 1, y + h + 1, 0xFF2A2A44);
         gfx.fill(x, y, x + w, y + h, COL_BAR_BG);
 
-        // filled portion
         int fillW = (int)(w * progress);
         if (fillW > 0) {
-            gfx.fill(x, y, x + fillW, y + h, COL_BAR_FILL);
+            // Gradient fill
+            for (int px = 0; px < fillW; px++) {
+                float t   = (float) px / Math.max(1, fillW);
+                int   col = lerpColor(0xFF6A44AA, COL_BAR_FILL, t);
+                gfx.fill(x + px, y, x + px + 1, y + h, 0xFF000000 | col);
+            }
 
-            // shimmer sweep
-            float shimmerX = (now % 1200) / 1200f;
-            int   shimmerPos = x + (int)(shimmerX * fillW);
-            int   shimmerW   = Math.min(30, fillW);
-            gfx.fill(shimmerPos - shimmerW / 2, y,
-                     shimmerPos + shimmerW / 2, y + h, 0x55FFFFFF);
+            // Shimmer sweep
+            float sw  = (now % 1500) / 1500f;
+            int   shP = x + (int)(sw * fillW);
+            int   shW = Math.min(44, fillW);
+            for (int si = 0; si < shW; si++) {
+                float e = 1f - Math.abs(si / (shW * 0.5f) - 1f);
+                gfx.fill(shP - shW / 2 + si, y, shP - shW / 2 + si + 1, y + h,
+                         ((int)(e * 55) << 24) | 0xFFFFFF);
+            }
 
-            // bright leading edge
+            // Bright edge
             gfx.fill(x + fillW - 2, y, x + fillW, y + h, COL_BAR_SHINE);
         }
 
-        // corner dots
-        gfx.fill(x - 3, y - 1, x,     y + h + 1, 0xFF9B72CF);
-        gfx.fill(x + w, y - 1, x + w + 3, y + h + 1, 0xFF444466);
+        gfx.fill(x - 3,     y - 1, x,         y + h + 1, 0xFF9B72CF);
+        gfx.fill(x + w,     y - 1, x + w + 3, y + h + 1, 0xFF444466);
     }
 
-    /** 1-pixel border. */
-    private void drawBorder(GuiGraphics gfx, int x, int y, int w, int h, int col) {
-        gfx.fill(x,         y,         x + w,     y + 1,     col); // top
-        gfx.fill(x,         y + h - 1, x + w,     y + h,     col); // bottom
-        gfx.fill(x,         y,         x + 1,     y + h,     col); // left
-        gfx.fill(x + w - 1, y,         x + w,     y + h,     col); // right
+    // =========================================================================
+    // Footer
+    // =========================================================================
+
+    private void drawFooter(GuiGraphics gfx, int W, int H, long now) {
+        int fh = 20;
+        int fy = H - fh;
+
+        // Footer strip
+        gfx.fill(0, fy, W, H, 0xCC04040C);
+        // Top separator — animated colour
+        float phase = (now / 2200f) % 1f;
+        int lineCol = lerpColor(0xFF1E1050, 0xFF6B44AA,
+                (float)Math.abs(Math.sin(phase * Math.PI)));
+        gfx.fill(0, fy, W, fy + 1, 0xFF000000 | lineCol);
+
+        // Subtle left / right decorative ticks
+        gfx.fill(0,     fy, 2,     H,  0xFF6B44AA);
+        gfx.fill(W - 2, fy, W,     H,  0xFF6B44AA);
+
+        // Pulsing copyright text
+        float pulse  = 0.60f + 0.40f * (float)Math.sin(now / 1900f);
+        int   tAlpha = (int)(pulse * 195);
+        String copy  = "\u00a7o\u00a9 2026  biuvietnam  \u2014  All rights reserved";
+        gfx.drawCenteredString(font, copy, W / 2, fy + 5, (tAlpha << 24) | 0x9988CC);
     }
 
-    // ── Utilities ────────────────────────────────────────────────────────────
+    // =========================================================================
+    // Utilities
+    // =========================================================================
+
+    private int worldBaseY(int H) {
+        // Ground sits at 95% screen height, leaving a small strip below
+        return H - (int)(H * 0.04f);
+    }
+
+    private void drawBorderLine(GuiGraphics gfx, int x, int y, int w, int h, int col) {
+        gfx.fill(x,         y,         x + w,     y + 1,     col);
+        gfx.fill(x,         y + h - 1, x + w,     y + h,     col);
+        gfx.fill(x,         y,         x + 1,     y + h,     col);
+        gfx.fill(x + w - 1, y,         x + w,     y + h,     col);
+    }
 
     private static float easeOutCubic(float t) {
-        return 1f - (float) Math.pow(1 - t, 3);
+        return 1f - (float)Math.pow(1 - t, 3);
     }
 
     private static int lerpColor(int a, int b, float t) {
+        t = Math.max(0f, Math.min(1f, t));
         int ar = (a >> 16) & 0xFF, ag = (a >> 8) & 0xFF, ab = a & 0xFF;
         int br = (b >> 16) & 0xFF, bg = (b >> 8) & 0xFF, bb = b & 0xFF;
-        int rr = (int)(ar + (br - ar) * t);
-        int rg = (int)(ag + (bg - ag) * t);
-        int rb = (int)(ab + (bb - ab) * t);
-        return 0xFF000000 | (rr << 16) | (rg << 8) | rb;
+        return ((int)(ar + (br - ar) * t) << 16)
+             | ((int)(ag + (bg - ag) * t) <<  8)
+             |  (int)(ab + (bb - ab) * t);
+    }
+
+    private static int lighten(int col, float amt) {
+        int r = Math.min(255, (int)(((col >> 16) & 0xFF) * (1 + amt)));
+        int g = Math.min(255, (int)(((col >>  8) & 0xFF) * (1 + amt)));
+        int b = Math.min(255, (int)(( col        & 0xFF) * (1 + amt)));
+        return (r << 16) | (g << 8) | b;
+    }
+
+    private static float hash(long seed) {
+        long x = seed ^ (seed >>> 33);
+        x *= 0xff51afd7ed558ccdL;
+        x ^= (x >>> 33);
+        x *= 0xc4ceb9fe1a85ec53L;
+        x ^= (x >>> 33);
+        return (x & 0x7FFFFFFFFFFFFFFFL) / (float)0x7FFFFFFFFFFFFFFFL;
     }
 
     private String getStatusText(float p) {
-        if (p < 0.20f) return "Initialising Fabric runtime…";
-        if (p < 0.45f) return "Loading mixin transformers…";
-        if (p < 0.70f) return "Scanning mod dependencies…";
-        if (p < 0.90f) return "Preparing resource packs…";
-        return "Almost ready…";
+        if (p < 0.20f) return "Initialising Fabric runtime\u2026";
+        if (p < 0.45f) return "Loading mixin transformers\u2026";
+        if (p < 0.70f) return "Scanning mod dependencies\u2026";
+        if (p < 0.90f) return "Preparing resource packs\u2026";
+        return "Almost ready\u2026";
     }
 }

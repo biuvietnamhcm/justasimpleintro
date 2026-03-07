@@ -36,7 +36,6 @@ public class VideoScreen extends Screen {
     private static final String VIDEO_FILENAME = "intro.mp4";
     private static final double FALLBACK_FPS   = 60.0;
     private static final int    BUFFER_FRAMES  = 8;
-    private static final long   SKIP_DELAY_MS  = 1_500;
     private static final long   FADE_IN_MS     = 500;
     private static final double LOOP_START_SEC = 9.0;
     private static final double MENU_SHOW_SEC  = 9.0;
@@ -261,7 +260,6 @@ public class VideoScreen extends Screen {
                 int a = (int)((1.0 - elapsed / (double)FADE_IN_MS) * 255);
                 gfx.fill(0, 0, width, height, a << 24);
             }
-            if (elapsed > SKIP_DELAY_MS) drawSkipHint(gfx, now);
         }
 
         boolean menuVisible = s_loopMode || elapsed >= (long)(MENU_SHOW_SEC * 1000);
@@ -455,22 +453,9 @@ public class VideoScreen extends Screen {
         gfx.drawCenteredString(font, "\u00a77Loading\u2026", cx, cy + 30, 0x77AA8855);
     }
 
-    // ── Skip hint ─────────────────────────────────────────────────────────────
-    private void drawSkipHint(GuiGraphics gfx, long now) {
-        float p = 0.5f + 0.5f * (float)Math.abs(Math.sin(now / 700.0));
-        int a = (int)(p * 190);
-        String s = "[ SPACE ]  Skip";
-        gfx.drawString(font, s, width - font.width(s) - 14, height - 20,
-                (a << 24) | 0xBBAA88, false);
-    }
-
     // ── Input ─────────────────────────────────────────────────────────────────
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
-        if (!s_loopMode && (keyCode == 32 || keyCode == 257)
-                && System.currentTimeMillis() - s_startMs > SKIP_DELAY_MS) {
-            enterLoopMode(); return true;
-        }
         return false;
     }
 
@@ -488,7 +473,6 @@ public class VideoScreen extends Screen {
                 }
             }
         }
-        if (!s_loopMode && now - s_startMs > SKIP_DELAY_MS) { enterLoopMode(); return true; }
         return false;
     }
 
