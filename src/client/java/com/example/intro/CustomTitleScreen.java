@@ -2,7 +2,6 @@ package com.example.intro;
 
 import java.util.Random;
 
-import net.minecraft.SharedConstants;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.OptionsScreen;
@@ -23,7 +22,6 @@ public class CustomTitleScreen extends Screen {
     private static final int BTN_W        = 240;
     private static final int BTN_H        = 44;
     private static final int BTN_GAP      = 10;
-    private static final int TITLE_OFFSET = -110;
 
     // ── Cave / amber colour palette ───────────────────────────────────────────
     private static final int COL_BG         = 0xFF060402;
@@ -145,53 +143,6 @@ public class CustomTitleScreen extends Screen {
         }
     }
 
-    // ── Title ─────────────────────────────────────────────────────────────────
-    private void drawTitle(GuiGraphics gfx, long now, float fadeIn, long elapsed) {
-        String title  = "M I N E C R A F T";
-        int    cx     = width / 2;
-        int    ty     = height / 2 + TITLE_OFFSET;
-        int    totalW = font.width(title);
-        int    xCurs  = cx - totalW / 2;
-
-        char[] letters = title.toCharArray();
-        for (int i = 0; i < letters.length; i++) {
-            String ch    = String.valueOf(letters[i]);
-            int    chW   = font.width(ch);
-            long   delay = i * 45L;
-            float  t     = Math.min(1f, Math.max(0f, (elapsed - delay) / 350f));
-            float  ease  = 1f - (float)Math.pow(1 - t, 3);
-            int    yOff  = (int)((1f - ease) * 22);
-            int    mainA = (int)(ease * fadeIn * 235);
-            int    shadA = (int)(ease * fadeIn * 100);
-
-            float pulse = 0.85f + 0.15f * (float)Math.abs(Math.sin(now / 1800.0 + i * 0.5));
-            int   col   = lerpColor(0xEEDDCC, 0xFFFFFF, pulse);
-
-            gfx.drawString(font, "\u00a7l" + ch, xCurs + 1, ty + 1 + yOff, (shadA << 24) | 0x2A1A08, false);
-            gfx.drawString(font, "\u00a7l" + ch, xCurs,     ty     + yOff, (mainA << 24) | col,       false);
-            xCurs += chW;
-        }
-
-        // Amber underline
-        float barFill = Math.min(1f, Math.max(0f, (elapsed - 400f) / 500f));
-        if (barFill > 0) {
-            int barW = (int)(totalW * barFill);
-            int barX = cx - totalW / 2;
-            int barY = ty + font.lineHeight + 4;
-            int barA = (int)(fadeIn * 200);
-            for (int g = 4; g > 0; g--) {
-                int ga = (int)(fadeIn * 20 / g);
-                gfx.fill(barX - g*2, barY - g, barX + barW + g*2, barY + 2 + g, (ga << 24) | 0xAA6622);
-            }
-            gfx.fill(barX, barY, barX + barW, barY + 2, (barA << 24) | 0xCC8833);
-        }
-
-        // Subtitle
-        String sub  = "Java Edition  \u2022  " + SharedConstants.getCurrentVersion().getName();
-        int    subA = (int)(fadeIn * 0.55f * 210);
-        gfx.drawCenteredString(font, sub, cx, ty + font.lineHeight + 14, (subA << 24) | 0xAA8855);
-    }
-
     // ── Buttons ───────────────────────────────────────────────────────────────
     private void detectHover(int mx, int my, long now) {
         hoveredBtn = -1;
@@ -203,12 +154,15 @@ public class CustomTitleScreen extends Screen {
         }
     }
 
+    /** Compute button rect relative to current GUI-scaled screen size. */
     private int[] btnRect(int i) {
-        int totalH = BUTTONS.length * BTN_H + (BUTTONS.length - 1) * BTN_GAP;
-        int startY = height / 2 + TITLE_OFFSET + 70;
-        int x      = (width - BTN_W) / 2;
-        int y      = startY + i * (BTN_H + BTN_GAP);
-        return new int[]{ x, y, BTN_W, BTN_H };
+        int bw  = Math.min(260, Math.max(160, width  / 4));
+        int bh  = Math.min(48,  Math.max(28,  height / 14));
+        int gap = Math.max(6,   height / 60);
+        int totalH = BUTTONS.length * (bh + gap) - gap;
+        int x = (width  - bw)     / 2;
+        int y = (height - totalH) / 2 + i * (bh + gap);
+        return new int[]{ x, y, bw, bh };
     }
 
     private void drawButtons(GuiGraphics gfx, long now, float fadeIn) {
